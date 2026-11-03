@@ -15,8 +15,9 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Schema + deterministic seed data | done |
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
-| Question bank: 100 English questions with expected SQL (`examples/examples.md`), not wired in yet | done |
-| Harness: retrieval of examples, SQL guardrails, repair loop, baseline eval | next |
+| Question bank: 100 English questions with expected SQL (`examples/examples.md`) | done |
+| Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
+| Harness: SQL guardrails, repair loop, proper eval suite | next |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback, evals, per-table tools | planned |
 
@@ -25,7 +26,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 Prerequisites:
 - [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
 - [Ollama](https://ollama.com) running locally with a model pulled, only needed for the `ask` tool:
-  `ollama pull llama3.1:8b` (the REST API and tests do not need it).
+  `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text` (the REST API and tests do not need them).
 
 ```sh
 # 1. install dependencies into .venv
@@ -55,6 +56,11 @@ Configuration (environment variables):
 | `IDENTITY_MCP_DB` | `./app.db` | SQLite file. Always opened read-only; if missing, REST returns `503` with the seed command |
 | `IDENTITY_MCP_LLM_URL` | `http://localhost:11434` | Ollama server |
 | `IDENTITY_MCP_LLM_MODEL` | `llama3.1:8b` | Model used for both SQL generation and answers |
+| `IDENTITY_MCP_EMBED_MODEL` | `nomic-embed-text` | Embedding model for example retrieval |
+| `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
+| `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
+| `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
+| `IDENTITY_MCP_CACHE_DIR` | `.cache` | Where bank embeddings are cached (re-embedded automatically when a question changes) |
 
 ## MCP server
 
@@ -101,9 +107,20 @@ Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with y
 Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to `http://localhost:8000/mcp`
 (Streamable HTTP).
 
-**Known limits of this basic flow.** There are no retrieved examples and no query validation yet, so
-an 8B model sometimes writes plausible but wrong SQL (for example, missing group-inherited access)
-and the answer step can phrase things awkwardly. Both are what the next step (the harness) addresses.
+**How retrieval works.** The bank's 100 questions are embedded once (cached in `.cache/`). For each
+incoming question, the closest `k` entries are added to the SQL prompt as worked examples (question,
+SQL, and notes), best match last. `ask` returns the entries it used in `examples` (id, question,
+score). If the embedding model is unavailable it answers without examples and sets `warning`.
+
+**How much it helps (measured, small sample).** 16 reworded questions, each with its own bank entry
+hidden, scored by whether the result contains the right entities: 8/16 without examples, 9 to 11/16 with
+k=2 to 4. A real gain, but within noise on 16 questions, and `nomic-embed-text` scores cluster between 0.5
+and 0.8, so `IDENTITY_MCP_EXAMPLES_MIN_SCORE` cannot yet filter out irrelevant matches. Remaining
+failures are mostly invented columns and wrong tables, which the guardrails and repair loop will target.
+
+**Known limits of this basic flow.** There is no query validation or repair yet, so
+an 8B model sometimes writes plausible but wrong SQL (invented columns, wrong joins) and the answer
+step can phrase things awkwardly and is slow on long result lists. The guardrails step addresses the first.
 The tests use a fake LLM and do not need Ollama.
 
 ## API
@@ -157,7 +174,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask), retrieval.py (RAG), bank.py, llm.py (Ollama client), mcp_server.py, db.py
 examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
 tests/                seed, API, MCP and question-bank tests
 docs/DESIGN.md

@@ -2,27 +2,19 @@
 
 import re
 import sqlite3
-from pathlib import Path
 
 import pytest
 import sqlglot
 from sqlglot import exp
 
+from identity_mcp import bank
 from identity_mcp.data import seed
 
-BANK = Path(__file__).parent.parent / "examples" / "examples.md"
-ENTRY = re.compile(
-    r"^## (?P<id>ex-\d+)\n\*\*Q:\*\* (?P<q>[^\n]+)\n\*\*Tags:\*\* (?P<tags>[^\n]+)\n\n```sql\n(?P<sql>(?s:.+?))\n```"
-    r"(?:\n\n\*\*Notes:\*\* (?P<notes>(?s:.+?)))?(?=\n\n## ex-|\s*\Z)",
-    re.M,
-)
+BANK = bank.bank_path()
 
 
 def load():
-    entries = [m.groupdict() for m in ENTRY.finditer(BANK.read_text())]
-    for e in entries:
-        e["tags"] = {t.strip() for t in e["tags"].split(",")}
-    return entries
+    return [{"id": e.id, "q": e.question, "tags": set(e.tags), "sql": e.sql, "notes": e.notes} for e in bank.load()]
 
 
 ENTRIES = load()

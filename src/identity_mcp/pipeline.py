@@ -1,7 +1,7 @@
 """Question -> SQL -> rows -> natural-language answer.
 
-v1: schema in the prompt, one LLM call to write SQL, run it read-only, one LLM call to summarize.
-No retrieval, validation or repair yet; a failure is reported as-is.
+Schema + retrieved bank examples in the prompt, one LLM call to write SQL, run it read-only, one LLM call to
+summarize. No validation or repair yet; a failure is reported as-is.
 
 Try it: uv run python -m identity_mcp.pipeline "How many users are terminated?"
 """
@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import llm
+from . import llm, retrieval
 from .db import connect_ro
 
 SCHEMA_SQL = (Path(__file__).parent / "data" / "schema.sql").read_text()
@@ -25,7 +25,7 @@ MAX_ROWS = 200  # rows returned to the caller
 SUMMARY_ROWS = 50  # rows shown to the LLM when summarizing
 QUERY_TIMEOUT_S = 5.0
 
-SQL_SYSTEM = f"""You translate questions about an identity and access governance database into one SQLite query.
+SQL_SYSTEM_BASE = f"""You translate questions about an identity and access governance database into one SQLite query.
 
 Database schema:
 {SCHEMA_SQL}
@@ -36,6 +36,12 @@ Rules:
 - "Admin" access means entitlements.is_admin = 1. Access a user holds is in access_grants.
 - Select human-readable columns (names, emails) rather than only ids.
 Respond with JSON: {{"sql": "<the query>"}}"""
+
+EXAMPLES_INTRO = """
+
+Worked examples of similar questions with the correct query. Follow their patterns and conventions
+(the closest example is last):
+"""
 
 SQL_SCHEMA = {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
 
@@ -52,9 +58,22 @@ def _strip_fences(sql: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
-async def generate_sql(question: str) -> str:
+def build_sql_system(hits: list[retrieval.Hit]) -> str:
+    if not hits:
+        return SQL_SYSTEM_BASE
+    blocks = []
+    for h in reversed(hits):  # best match last, nearest the question
+        block = f"Question: {h.example.question}\nSQL: {h.example.sql}"
+        if h.example.notes:
+            block += f"\nNote: {h.example.notes}"
+        blocks.append(block)
+    return SQL_SYSTEM_BASE + EXAMPLES_INTRO + "\n\n".join(blocks)
+
+
+async def generate_sql(question: str, hits: list[retrieval.Hit] | None = None) -> str:
     raw = await llm.chat(
-        [{"role": "system", "content": SQL_SYSTEM}, {"role": "user", "content": question}], schema=SQL_SCHEMA
+        [{"role": "system", "content": build_sql_system(hits or [])}, {"role": "user", "content": question}],
+        schema=SQL_SCHEMA,
     )
     try:
         return _strip_fences(json.loads(raw)["sql"])
@@ -91,20 +110,35 @@ async def summarize(question: str, sql: str, result: dict[str, Any]) -> str:
     return (await llm.chat([{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": user}])).strip()
 
 
-async def ask(question: str) -> dict[str, Any]:
-    """Answer `question` from the database. Never raises for expected failures; see the `error` key."""
-    out: dict[str, Any] = {"question": question, "answer": "", "sql": None}
-    t0 = time.monotonic()
+async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Answer `question` from the database. Never raises for expected failures; see the `error` key.
+
+    `k` overrides how many bank examples are retrieved (0 disables retrieval); `exclude` hides bank ids
+    (used by evals to hold questions out).
+    """
+    out: dict[str, Any] = {"question": question, "answer": "", "sql": None, "examples": []}
+    timings: dict[str, int] = {}
+    out["timings_ms"] = timings
     try:
-        out["sql"] = await generate_sql(question)
-        out["timings_ms"] = {"generate_sql": round((time.monotonic() - t0) * 1000)}
-        t1 = time.monotonic()
+        t = time.monotonic()
+        hits: list[retrieval.Hit] = []
+        try:
+            hits = await retrieval.retrieve(question, k=k, exclude=exclude)
+        except (llm.LLMError, FileNotFoundError) as e:  # degrade to no examples, but say so
+            out["warning"] = f"Answered without example retrieval: {e}"
+        out["examples"] = [{"id": h.example.id, "question": h.example.question, "score": round(h.score, 3)} for h in hits]
+        timings["retrieve"] = round((time.monotonic() - t) * 1000)
+
+        t = time.monotonic()
+        out["sql"] = await generate_sql(question, hits)
+        timings["generate_sql"] = round((time.monotonic() - t) * 1000)
+        t = time.monotonic()
         result = await asyncio.to_thread(execute, out["sql"])
-        out["timings_ms"]["execute"] = round((time.monotonic() - t1) * 1000)
+        timings["execute"] = round((time.monotonic() - t) * 1000)
         out.update(result)
-        t2 = time.monotonic()
+        t = time.monotonic()
         out["answer"] = await summarize(question, out["sql"], result)
-        out["timings_ms"]["summarize"] = round((time.monotonic() - t2) * 1000)
+        timings["summarize"] = round((time.monotonic() - t) * 1000)
     except llm.LLMError as e:
         out["error"] = str(e)
         out["answer"] = f"I couldn't reach the language model: {e}"
