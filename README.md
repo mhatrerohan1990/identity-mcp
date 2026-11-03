@@ -15,7 +15,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Schema + deterministic seed data | done |
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
-| Harness: example bank + retrieval, SQL guardrails, repair loop | next |
+| Question bank: 100 English questions with expected SQL (`examples/examples.md`), not wired in yet | done |
+| Harness: retrieval of examples, SQL guardrails, repair loop, baseline eval | next |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback, evals, per-table tools | planned |
 
@@ -157,6 +158,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
 src/identity_mcp/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
-tests/                seed and API tests
+examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
+tests/                seed, API, MCP and question-bank tests
 docs/DESIGN.md
 ```

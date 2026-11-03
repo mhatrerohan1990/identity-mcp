@@ -22,4 +22,5 @@ build-backend = "uv_build"
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.2.0",
+    "sqlglot>=30.29.0",
 ]
