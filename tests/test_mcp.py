@@ -1,0 +1,102 @@
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+from mcp import Client
+
+from grantlens import llm, mcp_server, pipeline
+from grantlens.api.app import app
+from grantlens.data import seed
+
+
+@pytest.fixture(scope="module")
+def db(tmp_path_factory):
+    path = tmp_path_factory.mktemp("db") / "app.db"
+    seed.build(path)
+    mp = pytest.MonkeyPatch()
+    mp.setenv("GRANTLENS_DB", str(path))
+    yield path
+    mp.undo()
+
+
+def fake_llm(sql: str, answer: str = "ok"):
+    """Stand-in for Ollama: structured calls (SQL generation) get `sql`, others get `answer`."""
+    async def chat(messages, *, schema=None, timeout=120):
+        return '{"sql": "%s"}' % sql if schema else answer
+    return chat
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def test_pipeline_happy_path(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM users WHERE status = 'terminated'", "50 are terminated."))
+    out = run(pipeline.ask("how many terminated?"))
+    assert out["sql"].startswith("SELECT COUNT") and out["rows"] == [[50]] and out["answer"] == "50 are terminated."
+    assert "error" not in out
+
+
+def test_pipeline_strips_code_fences_and_semicolon(db, monkeypatch):
+    async def chat(messages, *, schema=None, timeout=120):
+        return '{"sql": "```sql\\nSELECT 1;\\n```"}' if schema else "one"
+    monkeypatch.setattr(llm, "chat", chat)
+    assert run(pipeline.ask("x"))["sql"] == "SELECT 1"
+
+
+def test_pipeline_zero_rows_skips_summary_llm(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT * FROM users WHERE department = 'Mars'", "SHOULD NOT BE USED"))
+    out = run(pipeline.ask("mars?"))
+    assert out["row_count"] == 0 and out["answer"] == "No matching records were found."
+
+
+def test_pipeline_bad_sql_is_reported_not_raised(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT nope FROM users"))
+    out = run(pipeline.ask("x"))
+    assert "OperationalError" in out["error"] and out["sql"] == "SELECT nope FROM users"
+
+
+def test_execution_is_read_only(db):
+    with pytest.raises(Exception, match="readonly|read-only|query_only"):
+        pipeline.execute("DELETE FROM users")
+    assert pipeline.execute("SELECT COUNT(*) FROM users")["rows"] == [[500]]
+
+
+def test_row_cap(db):
+    out = pipeline.execute("SELECT * FROM activity_events")
+    assert out["row_count"] == pipeline.MAX_ROWS and out["truncated"]
+
+
+def test_llm_down_is_reported(db, monkeypatch):
+    async def chat(*a, **k):
+        raise llm.LLMError("Cannot reach the LLM")
+    monkeypatch.setattr(llm, "chat", chat)
+    out = run(pipeline.ask("x"))
+    assert "Cannot reach" in out["error"]
+
+
+def test_mcp_tool_in_memory(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM groups", "12 groups."))
+
+    async def go():
+        async with Client(mcp_server.mcp) as client:
+            tools = (await client.list_tools()).tools
+            assert [t.name for t in tools] == ["ask"]
+            result = await client.call_tool("ask", {"question": "how many groups?"})
+            return result.structured_content
+
+    out = run(go())
+    assert out["answer"] == "12 groups." and out["rows"] == [[12]]
+
+
+def test_mcp_mounted_in_fastapi(db):
+    with TestClient(app, base_url="http://localhost:8000") as client:
+        r = client.post(
+            "/mcp",
+            headers={"Accept": "application/json, text/event-stream"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}},
+        )
+        assert r.status_code == 200 and "GrantLens" in r.text
+        assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/users", params={"limit": 1}).status_code == 200

@@ -13,13 +13,17 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Step | State |
 |---|---|
 | Schema + deterministic seed data | done |
-| Simple read-only REST API per entity | done (this README) |
-| Example bank, retrieval, NL→SQL pipeline, guardrails | next |
-| MCP server, chat UI, feedback, evals | planned |
+| Simple read-only REST API per entity | done |
+| MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
+| Harness: example bank + retrieval, SQL guardrails, repair loop | next |
+| Chat UI, feedback, evals, per-table tools | planned |
 
 ## Run it
 
-Prerequisites: [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
+Prerequisites:
+- [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
+- [Ollama](https://ollama.com) running locally with a model pulled, only needed for the `ask` tool:
+  `ollama pull llama3.1:8b` (the REST API and tests do not need it).
 
 ```sh
 # 1. install dependencies into .venv
@@ -40,8 +44,63 @@ If port 8000 is taken, pick another with `--port`. Then open:
 - Interactive docs (try every endpoint in the browser): http://localhost:8000/docs
 - Health check: http://localhost:8000/health
 
-Configuration: `GRANTLENS_DB` sets the SQLite path (default `./app.db`). The API opens it
-read-only. If the file is missing, endpoints return `503` with the seed command to run.
+Configuration (environment variables):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GRANTLENS_DB` | `./app.db` | SQLite file. Always opened read-only; if missing, REST returns `503` with the seed command |
+| `GRANTLENS_LLM_URL` | `http://localhost:11434` | Ollama server |
+| `GRANTLENS_LLM_MODEL` | `llama3.1:8b` | Model used for both SQL generation and answers |
+
+## MCP server
+
+One tool, `ask(question)`. It sends the question and the schema to the LLM, which writes a SQL query;
+the query runs read-only (5s limit, 200-row cap); the LLM then turns the rows into a plain-English
+answer. It returns `answer`, `sql`, `columns`, `rows`, `row_count`, `truncated`, `timings_ms`, and
+`error` if something failed.
+
+The same server is available two ways:
+
+```sh
+# HTTP: starts with the API above, endpoint http://localhost:8000/mcp
+uv run uvicorn grantlens.api.app:app --port 8000
+
+# stdio: for clients that launch the server themselves
+uv run python -m grantlens.mcp_server
+```
+
+Try the pipeline without MCP:
+
+```sh
+uv run python -m grantlens.pipeline "Which terminated users still have access?"
+```
+
+Connect Claude Code (with the HTTP server running):
+
+```sh
+claude mcp add --transport http grantlens http://localhost:8000/mcp
+```
+
+Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with your absolute path:
+
+```json
+{
+  "mcpServers": {
+    "grantlens": {
+      "command": "uv",
+      "args": ["--directory", "/absolute/path/to/this/repo", "run", "python", "-m", "grantlens.mcp_server"]
+    }
+  }
+}
+```
+
+Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to `http://localhost:8000/mcp`
+(Streamable HTTP).
+
+**Known limits of this basic flow.** There are no retrieved examples and no query validation yet, so
+an 8B model sometimes writes plausible but wrong SQL (for example, missing group-inherited access)
+and the answer step can phrase things awkwardly. Both are what the next step (the harness) addresses.
+The tests use a fake LLM and do not need Ollama.
 
 ## API
 
@@ -93,7 +152,8 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 
 ```
 src/grantlens/data/   schema.sql, seed.py
-src/grantlens/api/    app.py, routes.py, db.py
+src/grantlens/api/    app.py (also mounts MCP), routes.py, db.py
+src/grantlens/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
 tests/                seed and API tests
 docs/DESIGN.md
 ```
