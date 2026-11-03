@@ -96,7 +96,15 @@ function addBot(data) {
   const m = el("div", "msg bot"), failed = !!data.error;
   m.append(el("div", failed ? "bubble error" : "bubble", data.answer || data.error));
   if (data.sql) {
-    const d = el("details"); d.append(el("summary", null, "SQL")); d.append(el("pre", null, data.sql)); m.append(d);
+    const fixed = data.repairs > 0 && !failed;
+    const d = el("details"); d.append(el("summary", null, fixed ? `SQL (fixed after ${data.repairs} retry)` : "SQL"));
+    d.append(el("pre", null, data.sql)); m.append(d);
+  }
+  const rejected = (data.attempts || []).filter(a => !a.ok && !(failed && a.sql === data.sql));
+  if (rejected.length) {  // earlier queries that failed validation, with the reasons the model was shown
+    const d = el("details"); d.append(el("summary", null, `Rejected attempts (${rejected.length})`));
+    rejected.forEach(a => d.append(el("pre", null, `${a.sql}\n\n-- ${a.stage}: ${a.errors.join(" | ")}`)));
+    m.append(d);
   }
   if (data.columns && data.rows && data.rows.length) {
     const d = el("details"), n = data.row_count + (data.truncated ? "+" : "");

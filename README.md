@@ -18,7 +18,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Question bank: 100 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
 | Validation before execution: static checks, then an `EXPLAIN` dry run | done |
-| Harness: repair loop, proper eval suite | next |
+| Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
+| Harness: proper eval suite | next |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback, evals, per-table tools | planned |
 
@@ -61,6 +62,7 @@ Configuration (environment variables):
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
 | `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
 | `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
+| `IDENTITY_MCP_MAX_REPAIRS` | `2` | Retries after a query fails validation; `0` disables the repair loop |
 | `IDENTITY_MCP_LOG_LEVEL` | `INFO` | Level for the flow log (`DEBUG`, `INFO`, `WARNING`, ...) |
 | `IDENTITY_MCP_LOG_PROMPTS` | `1` | Log the full prompts and raw LLM replies; `0` hides them |
 | `IDENTITY_MCP_CACHE_DIR` | `.cache` | Where bank embeddings are cached (re-embedded automatically when a question changes) |
@@ -128,8 +130,26 @@ All 100 question-bank queries pass validation (tested), and 18 bad or hostile qu
 right stage.
 
 Validation catches broken and unsafe SQL, not wrong SQL: a valid query that answers the wrong question
-(say, an invented date filter) passes. That is what the examples and the eval are for. The next step feeds
-these messages back to the model for one retry.
+(say, an invented date filter) passes. That is what the examples and the eval are for.
+
+### Repair loop
+
+When a query fails validation, the model gets the conversation so far: its own failed query as its reply,
+then the reasons, and is asked for a corrected query. The new query is validated again, up to
+`IDENTITY_MCP_MAX_REPAIRS` times (default 2). It stops early if the model returns the same query. Nothing
+invalid is ever executed; if the last attempt still fails, `ask` reports it as above.
+
+The error messages are written to be fixable. For `SELECT i.integration ... JOIN entitlements i` the model
+is told: `i.integration (i is entitlements) does not exist ... A column named 'integration' exists on:
+applications`. A terser message ("Unknown column: integration") was not enough: Llama 3.1 8B resubmitted the
+identical query, and fixed it on the first retry once the message named the offending reference.
+
+`ask` returns `attempts` (every query tried, with `ok`, `stage`, `errors`) and `repairs` (retries made).
+The chat page shows "SQL (fixed after 1 retry)" and a collapsible "Rejected attempts" list. In a test on 16
+reworded questions, 1 query was invalid on the first try and the loop repaired it; the number of
+right answers did not change (11/16), because the repaired query was valid but still not the expected one.
+The loop turns recoverable mistakes into answers rather than refusals; it does not make the model more
+correct.
 
 ## Logging
 
@@ -165,8 +185,7 @@ k=2 to 4. A real gain, but within noise on 16 questions, and `nomic-embed-text` 
 and 0.8, so `IDENTITY_MCP_EXAMPLES_MIN_SCORE` cannot yet filter out irrelevant matches. Remaining
 failures are mostly invented columns and wrong tables, which the guardrails and repair loop will target.
 
-**Known limits of this basic flow.** There is no repair loop yet: invalid SQL is rejected, not retried. An 8B model also sometimes writes
-valid but wrong SQL, and the answer step can phrase things awkwardly and is slow on long result lists.
+**Known limits of this basic flow.** An 8B model sometimes writes valid but wrong SQL, which neither validation nor repair can catch, and the answer step can phrase things awkwardly and is slow on long result lists.
 The tests use a fake LLM and do not need Ollama.
 
 ## API

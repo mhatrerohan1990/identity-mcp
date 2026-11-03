@@ -100,6 +100,6 @@ def test_failures_are_logged_with_the_sql(env, caplog, monkeypatch):
     out = run(pipeline.ask("q", k=0))
     assert "error" in out
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert len(errors) == 1 and "'nope' could not be resolved" in errors[0] and "SELECT nope FROM users" in errors[0]
+    assert len(errors) == 1 and "nope does not exist" in errors[0] and "SELECT nope FROM users" in errors[0]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(m.startswith("validation failed at static stage") for m in warnings)

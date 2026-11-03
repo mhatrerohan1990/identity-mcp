@@ -92,11 +92,51 @@ def validate_static(sql: str) -> list[str]:
     try:  # resolves every column against its table; catches unknown columns and ambiguous or reused aliases
         qualify(tree.copy(), schema=SCHEMA, dialect="sqlite", validate_qualify_columns=True)
     except SqlglotError as e:
-        message = re.sub(r"\s*Line: \d+, Col: \d+\.?", "", str(e)).rstrip(".")
-        used = sorted({t.name.lower() for t in tree.find_all(exp.Table)} & _TABLES)
-        available = "; ".join(f"{t}({', '.join(SCHEMA[t])})" for t in used)
-        return [f"Column check failed: {message}. Columns available in the tables this query uses: {available}."]
+        return [_column_error(tree, str(e))]
     return []
+
+
+def _column_error(tree: exp.Expression, raw: str) -> str:
+    """Turn sqlglot's terse message into one that names the offending reference and says how to fix it."""
+    message = re.sub(r"\s*Line: \d+, Col: \d+\.?", "", raw).rstrip(".")
+    aliases = {t.alias_or_name.lower(): t.name.lower() for t in tree.find_all(exp.Table)}
+    used = sorted(set(aliases.values()) & _TABLES)
+    tables = "; ".join(f"{t}({', '.join(SCHEMA[t])})" for t in used)
+
+    reused = re.search(r"Alias already used: (\w+)", message)
+    if reused:
+        return (f"Alias {reused.group(1)!r} is used for more than one table or subquery. Give each its own alias. "
+                f"Tables in this query: {tables}.")
+
+    missing = re.search(r"Unknown column: (\w+)|Column '(\w+)' could not be resolved", message)
+    if not missing:
+        return f"Column check failed: {message}. Columns available in the tables this query uses: {tables}."
+    name = (missing.group(1) or missing.group(2)).lower()
+    where = sorted(t for t, cols in SCHEMA.items() if name in {c.lower() for c in cols})
+
+    # name the offending reference(s), e.g. "i.integration (i is entitlements)"
+    refs = []
+    for col in tree.find_all(exp.Column):
+        if col.name.lower() != name:
+            continue
+        table = aliases.get(col.table.lower())
+        if col.table and table in SCHEMA and name in {c.lower() for c in SCHEMA[table]}:
+            continue  # a valid reference to the same column name on a table that has it
+        if not col.table and any(name in {c.lower() for c in SCHEMA[t]} for t in used):
+            continue
+        refs.append(f"{col.table}.{col.name} ({col.table} is {table})" if table else col.sql())
+    refs_text = ", ".join(dict.fromkeys(refs)) or repr(name)
+    text = f"Column check failed: {refs_text} does not exist."
+    text += f" Tables in this query: {tables}."
+    if where:
+        text += f" A column named {name!r} exists on: {', '.join(where)}."
+        if not set(where) & set(used):
+            text += " Join that table to use it."
+        else:
+            text += " Read it from that table's alias instead."
+    else:
+        text += f" There is no column named {name!r} in any table."
+    return text
 
 
 def validate_dry_run(sql: str, con: sqlite3.Connection | None = None) -> list[str]:

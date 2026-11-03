@@ -26,9 +26,9 @@ def test_every_bank_query_passes_validation(con):
 
 
 @pytest.mark.parametrize("sql, stage, message", [
-    ("SELECT i.integration FROM entitlements i", "static", "Unknown column: integration"),
-    ("SELECT g.name FROM access_grants g", "static", "Unknown column: name"),
-    ("SELECT 1 FROM users g JOIN groups g ON g.id = g.id", "static", "Alias already used: g"),
+    ("SELECT i.integration FROM entitlements i", "static", "i.integration (i is entitlements) does not exist"),
+    ("SELECT g.name FROM access_grants g", "static", "g.name (g is access_grants) does not exist"),
+    ("SELECT 1 FROM users g JOIN groups g ON g.id = g.id", "static", "Alias 'g' is used for more than one table"),
     ("SELECT * FROM employees", "static", "Unknown table 'employees'"),
     ("SELECT name FROM sqlite_master", "static", "Unknown table 'sqlite_master'"),
     ("SELECT * FROM pragma_table_info('users')", "static", "Table-valued functions"),
@@ -62,13 +62,19 @@ def test_accepts_legitimate_queries(con, sql):
     assert validation.validate(sql, con).ok
 
 
-def test_column_errors_are_clean_and_say_what_exists():
-    (msg,) = validation.validate_static("SELECT nope FROM users")
-    assert "Line:" not in msg and "Col:" not in msg  # parser position noise removed
-    assert "'nope' could not be resolved" in msg
-    assert "users(id, email, name, department" in msg  # what the model (or user) can use instead
+def test_column_errors_name_the_offender_and_the_fix():
     (msg,) = validation.validate_static("SELECT i.integration FROM entitlements i")
+    assert "Line:" not in msg and "Col:" not in msg  # parser position noise removed
+    assert "i.integration (i is entitlements) does not exist" in msg
     assert "entitlements(id, app_id, name, is_admin)" in msg and "users(" not in msg  # only tables in play
+    assert "'integration' exists on: applications. Join that table to use it." in msg  # real column, wrong table
+
+    (msg,) = validation.validate_static("SELECT a.integration FROM applications a JOIN entitlements e ON e.app_id = a.id WHERE e.integration = 'x'")
+    assert "e.integration (e is entitlements)" in msg and "a.integration" not in msg  # only the bad reference is named
+
+    (msg,) = validation.validate_static("SELECT nope FROM users")
+    assert "nope does not exist" in msg and "There is no column named 'nope' in any table" in msg
+    assert "exists on" not in msg  # nothing to point at
 
 
 def test_static_stage_never_touches_the_database():
@@ -102,12 +108,13 @@ def test_invalid_sql_is_not_executed_and_user_gets_reasons(env, monkeypatch, cap
 
     monkeypatch.setattr(llm, "chat", chat)
     monkeypatch.setattr(pipeline, "execute", lambda sql: executed.append(sql))
+    monkeypatch.setenv("IDENTITY_MCP_MAX_REPAIRS", "0")  # this test is about the no-retry path
     caplog.set_level(logging.INFO, logger="identity_mcp")
     out = run(pipeline.ask("apps per integration", k=0))
 
     assert executed == [] and chats == [True]  # never executed, and the summarizer was never called
     assert "rows" not in out and out["sql"] == "SELECT i.integration FROM entitlements i"
-    assert out["validation_errors"] and "Unknown column: integration" in out["validation_errors"][0]
+    assert out["validation_errors"] and "i.integration (i is entitlements)" in out["validation_errors"][0]
     assert out["error"].startswith("Query failed validation (static)")
     assert "I didn't run anything" in out["answer"] and "- Column check failed" in out["answer"]
     assert "validate" in out["timings_ms"] and "execute" not in out["timings_ms"]

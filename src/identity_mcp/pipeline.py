@@ -1,8 +1,8 @@
 """Question -> SQL -> rows -> natural-language answer.
 
 Schema + retrieved bank examples in the prompt, one LLM call to write SQL, validate it (static checks, then an
-EXPLAIN dry run), run it read-only, one LLM call to summarize. A query that fails validation is reported, not
-run. No repair loop yet.
+EXPLAIN dry run), run it read-only, one LLM call to summarize. A query that fails validation goes back to the
+model with the reasons (up to IDENTITY_MCP_MAX_REPAIRS times); if it still fails it is reported, not run.
 
 Try it: uv run python -m identity_mcp.pipeline "How many users are terminated?"
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -25,6 +26,7 @@ TODAY = "2026-11-01"  # matches the seed data
 MAX_ROWS = 200  # rows returned to the caller
 SUMMARY_ROWS = 50  # rows shown to the LLM when summarizing
 QUERY_TIMEOUT_S = 5.0
+DEFAULT_MAX_REPAIRS = 2  # extra model attempts after a query fails validation
 
 SQL_SYSTEM_BASE = f"""You translate questions about an identity and access governance database into one SQLite query.
 
@@ -45,6 +47,11 @@ Worked examples of similar questions with the correct query. Follow their patter
 """
 
 SQL_SCHEMA = {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
+
+REPAIR_FEEDBACK = """That query failed validation and was not run:
+{problems}
+
+Write a corrected query that fixes every problem, and respond with JSON: {{"sql": "<the query>"}}"""
 
 ANSWER_SYSTEM = """You answer a user's question using only the query results provided.
 Be concise and concrete. Quote names and numbers exactly as they appear. List the items when there are only a few.
@@ -71,15 +78,39 @@ def build_sql_system(hits: list[retrieval.Hit]) -> str:
     return SQL_SYSTEM_BASE + EXAMPLES_INTRO + "\n\n".join(blocks)
 
 
-async def generate_sql(question: str, hits: list[retrieval.Hit] | None = None) -> str:
-    raw = await llm.chat(
-        [{"role": "system", "content": build_sql_system(hits or [])}, {"role": "user", "content": question}],
-        schema=SQL_SCHEMA,
-    )
+def max_repairs() -> int:
+    try:
+        return max(0, int(os.environ.get("IDENTITY_MCP_MAX_REPAIRS", DEFAULT_MAX_REPAIRS)))
+    except ValueError:
+        return DEFAULT_MAX_REPAIRS
+
+
+def sql_messages(question: str, hits: list[retrieval.Hit]) -> list[dict[str, str]]:
+    return [{"role": "system", "content": build_sql_system(hits)}, {"role": "user", "content": question}]
+
+
+async def _request_sql(messages: list[dict[str, str]]) -> str:
+    raw = await llm.chat(messages, schema=SQL_SCHEMA)
     try:
         return _strip_fences(json.loads(raw)["sql"])
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         raise llm.LLMError(f"LLM did not return the expected JSON: {raw[:200]!r}") from e
+
+
+async def generate_sql(question: str, hits: list[retrieval.Hit] | None = None) -> str:
+    return await _request_sql(sql_messages(question, hits or []))
+
+
+async def repair_sql(question: str, hits: list[retrieval.Hit] | None, failed: list[tuple[str, list[str]]]) -> str:
+    """Ask again with the conversation so far: each failed query as the model's own reply, then why it failed."""
+    messages = sql_messages(question, hits or [])
+    for sql, errors in failed:
+        problems = "\n".join(f"- {e}" for e in errors)
+        messages += [
+            {"role": "assistant", "content": json.dumps({"sql": sql})},
+            {"role": "user", "content": REPAIR_FEEDBACK.format(problems=problems)},
+        ]
+    return await _request_sql(messages)
 
 
 def execute(sql: str) -> dict[str, Any]:
@@ -139,22 +170,54 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
         )
 
         t = time.monotonic()
-        out["sql"] = await generate_sql(question, hits)
+        sql = await generate_sql(question, hits)
         timings["generate_sql"] = round((time.monotonic() - t) * 1000)
-        flow.info("generated sql in %d ms: %s", timings["generate_sql"], one_line(out["sql"], 600))
+        flow.info("generated sql in %d ms: %s", timings["generate_sql"], one_line(sql, 600))
+
+        limit = max_repairs()
+        attempts: list[dict[str, Any]] = []
+        failed: list[tuple[str, list[str]]] = []
         t = time.monotonic()
-        check = await asyncio.to_thread(validate, out["sql"])
-        timings["validate"] = round((time.monotonic() - t) * 1000)
+        validate_ms = repair_ms = repair_calls = 0
+        while True:
+            tv = time.monotonic()
+            check = await asyncio.to_thread(validate, sql)
+            validate_ms += round((time.monotonic() - tv) * 1000)
+            attempts.append({"sql": sql, "ok": check.ok, "stage": check.stage, "errors": check.errors})
+            if check.ok:
+                flow.info("validation passed (static + dry run) on attempt %d/%d", len(attempts), limit + 1)
+                break
+            flow.warning(
+                "validation failed at %s stage on attempt %d/%d: %s", check.stage, len(attempts), limit + 1, " | ".join(check.errors)
+            )
+            failed.append((sql, check.errors))
+            if len(failed) > limit:
+                break
+            tr = time.monotonic()
+            flow.info("repair %d/%d: asking the model to fix its query", len(failed), limit)
+            new_sql = await repair_sql(question, hits, failed)
+            repair_calls += 1
+            repair_ms += round((time.monotonic() - tr) * 1000)
+            flow.info("repair %d/%d produced: %s", len(failed), limit, one_line(new_sql, 600))
+            if " ".join(new_sql.split()) == " ".join(sql.split()):
+                flow.warning("the model returned the same query; not retrying further")
+                break
+            sql = new_sql
+        out["sql"] = sql
+        out["attempts"] = attempts
+        out["repairs"] = repair_calls
+        timings["validate"] = validate_ms
+        if out["repairs"]:
+            timings["repair"] = repair_ms
         if not check.ok:  # nothing is executed
             out["validation_errors"] = check.errors
             out["error"] = f"Query failed validation ({check.stage}): " + " ".join(check.errors)
+            tried = f" after {out['repairs']} repair attempt(s)" if out["repairs"] else ""
             out["answer"] = (
-                "I couldn't produce a valid query for that question, so I didn't run anything. Problems found:\n"
+                f"I couldn't produce a valid query for that question{tried}, so I didn't run anything. Problems found:\n"
                 + "\n".join(f"- {e}" for e in check.errors)
             )
-            flow.warning("validation failed at %s stage in %d ms: %s", check.stage, timings["validate"], " | ".join(check.errors))
         else:
-            flow.info("validation passed (static + dry run) in %d ms", timings["validate"])
             t = time.monotonic()
             result = await asyncio.to_thread(execute, out["sql"])
             timings["execute"] = round((time.monotonic() - t) * 1000)
