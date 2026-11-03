@@ -18,6 +18,7 @@ from typing import Any
 
 from . import llm, retrieval
 from .db import connect_ro
+from .logs import configure, flow, new_request_id, one_line
 
 SCHEMA_SQL = (Path(__file__).parent / "data" / "schema.sql").read_text()
 TODAY = "2026-11-01"  # matches the seed data
@@ -116,6 +117,9 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
     `k` overrides how many bank examples are retrieved (0 disables retrieval); `exclude` hides bank ids
     (used by evals to hold questions out).
     """
+    rid = new_request_id()
+    started = time.monotonic()
+    flow.info("ask start id=%s k=%s excluded=%s question=%r", rid, "default" if k is None else k, sorted(exclude), question)
     out: dict[str, Any] = {"question": question, "answer": "", "sql": None, "examples": []}
     timings: dict[str, int] = {}
     out["timings_ms"] = timings
@@ -126,29 +130,47 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
             hits = await retrieval.retrieve(question, k=k, exclude=exclude)
         except (llm.LLMError, FileNotFoundError) as e:  # degrade to no examples, but say so
             out["warning"] = f"Answered without example retrieval: {e}"
+            flow.warning("retrieval failed, continuing without examples: %s", e)
         out["examples"] = [{"id": h.example.id, "question": h.example.question, "score": round(h.score, 3)} for h in hits]
         timings["retrieve"] = round((time.monotonic() - t) * 1000)
+        flow.info(
+            "retrieved %d example(s) in %d ms: %s",
+            len(hits), timings["retrieve"], "; ".join(f"{h.example.id} {h.score:.3f} {h.example.question!r}" for h in hits) or "none",
+        )
 
         t = time.monotonic()
         out["sql"] = await generate_sql(question, hits)
         timings["generate_sql"] = round((time.monotonic() - t) * 1000)
+        flow.info("generated sql in %d ms: %s", timings["generate_sql"], one_line(out["sql"], 600))
         t = time.monotonic()
         result = await asyncio.to_thread(execute, out["sql"])
         timings["execute"] = round((time.monotonic() - t) * 1000)
         out.update(result)
+        flow.info(
+            "executed in %d ms: %d row(s)%s columns=%s first_row=%s",
+            timings["execute"], result["row_count"], " (truncated)" if result["truncated"] else "",
+            result["columns"], one_line(result["rows"][0], 200) if result["rows"] else "-",
+        )
         t = time.monotonic()
         out["answer"] = await summarize(question, out["sql"], result)
         timings["summarize"] = round((time.monotonic() - t) * 1000)
+        flow.info("summarized in %d ms: %s", timings["summarize"], one_line(out["answer"], 300))
     except llm.LLMError as e:
         out["error"] = str(e)
         out["answer"] = f"I couldn't reach the language model: {e}"
     except (sqlite3.Error, FileNotFoundError) as e:
         out["error"] = f"{type(e).__name__}: {e}"
         out["answer"] = "I generated a query but it failed to run, so I can't answer that yet."
+    total = round((time.monotonic() - started) * 1000)
+    if "error" in out:
+        flow.error("ask failed after %d ms: %s | sql=%s", total, out["error"], one_line(out["sql"] or "-", 300))
+    else:
+        flow.info("ask done in %d ms", total)
     return out
 
 
 if __name__ == "__main__":
+    configure()
     if len(sys.argv) < 2:
         sys.exit('usage: python -m identity_mcp.pipeline "your question"')
     print(json.dumps(asyncio.run(ask(" ".join(sys.argv[1:]))), indent=2, default=str))

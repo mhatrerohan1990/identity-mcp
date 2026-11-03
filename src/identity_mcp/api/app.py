@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .. import pipeline
+from ..logs import configure
 from ..mcp_server import mcp
 from .routes import ALL
 
@@ -19,6 +20,7 @@ mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    configure()
     async with mcp_app.router.lifespan_context(mcp_app):
         yield
 

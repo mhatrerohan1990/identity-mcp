@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 import httpx
 
+from .logs import block, prompt
 BASE_URL = os.environ.get("IDENTITY_MCP_LLM_URL", "http://localhost:11434")
 MODEL = os.environ.get("IDENTITY_MCP_LLM_MODEL", "llama3.1:8b")
 EMBED_MODEL = os.environ.get("IDENTITY_MCP_EMBED_MODEL", "nomic-embed-text")
@@ -40,7 +42,13 @@ async def chat(messages: list[dict[str, str]], *, schema: dict[str, Any] | None 
     body: dict[str, Any] = {"model": MODEL, "messages": messages, "stream": False, "options": {"temperature": 0}}
     if schema:
         body["format"] = schema
-    return (await _post("/api/chat", body, timeout))["message"]["content"]
+    if prompt.isEnabledFor(10):  # DEBUG: the exact messages the model receives
+        shown = "\n\n".join(f"--- {m['role']} ---\n{m['content']}" for m in messages)
+        prompt.debug("%s", block(f"LLM request model={MODEL} structured={'yes' if schema else 'no'}", shown))
+    t = time.monotonic()
+    content = (await _post("/api/chat", body, timeout))["message"]["content"]
+    prompt.debug("%s", block(f"LLM response ({round((time.monotonic() - t) * 1000)} ms)", content))
+    return content
 
 
 async def embed(texts: list[str], *, timeout: float = 60) -> list[list[float]]:

@@ -11,6 +11,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import pipeline
+from .logs import configure
 
 mcp = MCPServer(
     "identity-mcp",
@@ -33,4 +34,5 @@ async def ask(question: str) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    configure()  # stderr only: stdout carries the MCP protocol
     mcp.run()

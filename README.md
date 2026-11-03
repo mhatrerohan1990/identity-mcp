@@ -60,6 +60,8 @@ Configuration (environment variables):
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
 | `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
 | `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
+| `IDENTITY_MCP_LOG_LEVEL` | `INFO` | Level for the flow log (`DEBUG`, `INFO`, `WARNING`, ...) |
+| `IDENTITY_MCP_LOG_PROMPTS` | `1` | Log the full prompts and raw LLM replies; `0` hides them |
 | `IDENTITY_MCP_CACHE_DIR` | `.cache` | Where bank embeddings are cached (re-embedded automatically when a question changes) |
 
 ## MCP server
@@ -106,6 +108,28 @@ Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with y
 
 Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to `http://localhost:8000/mcp`
 (Streamable HTTP).
+
+## Logging
+
+Every `ask` is logged to stderr with a request id, so you can follow one question through the whole flow
+(from the server, the CLI, or the stdio MCP server; stdout stays clean for the protocol):
+
+```
+12:32:01.838 INFO  [d15e10d7] flow   | ask start ... question='Which active admins have had no activity ...'
+12:32:01.945 INFO  [d15e10d7] flow   | retrieved 4 example(s) in 106 ms: ex-068 0.909 '...'; ex-067 0.799 '...'
+12:32:01.945 DEBUG [d15e10d7] prompt | ===== LLM request model=llama3.1:8b structured=yes =====
+                                        --- system --- (rules, schema, retrieved examples with notes)
+                                        --- user --- (the question)
+12:32:06.036 DEBUG [d15e10d7] prompt | ===== LLM response (4091 ms) ===== {"sql": "..."}
+12:32:06.036 INFO  [d15e10d7] flow   | generated sql in 4091 ms: SELECT ...
+12:32:06.045 INFO  [d15e10d7] flow   | executed in 9 ms: 15 row(s) columns=[...] first_row=[...]
+12:32:08.072 INFO  [d15e10d7] flow   | summarized in 2026 ms: ...
+12:32:08.072 INFO  [d15e10d7] flow   | ask done in 6233 ms
+```
+
+The `prompt` lines are the exact messages sent to Ollama and its raw replies, and they are large (about 9 KB
+per question). Set `IDENTITY_MCP_LOG_PROMPTS=0` to keep only the one-line `flow` steps. Prompts and the
+answer-step prompt contain query results, so treat these logs as sensitive once the data is real.
 
 **How retrieval works.** The bank's 100 questions are embedded once (cached in `.cache/`). For each
 incoming question, the closest `k` entries are added to the SQL prompt as worked examples (question,
@@ -174,7 +198,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask), retrieval.py (RAG), bank.py, llm.py (Ollama client), mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask), retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
 tests/                seed, API, MCP and question-bank tests
 docs/DESIGN.md

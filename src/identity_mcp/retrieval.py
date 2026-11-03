@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from . import bank, llm
+from .logs import flow
 
 K = int(os.environ.get("IDENTITY_MCP_EXAMPLES_K", "4"))
 MIN_SCORE = float(os.environ.get("IDENTITY_MCP_EXAMPLES_MIN_SCORE", "0.5"))
@@ -44,6 +45,7 @@ async def _document_vectors(texts: list[str]) -> list[list[float]]:
     keys = [hashlib.sha256(f"{llm.EMBED_MODEL}|{t}".encode()).hexdigest() for t in texts]
     missing = [i for i, k in enumerate(keys) if k not in cache]
     if missing:
+        flow.info("embedding %d of %d bank question(s) (rest cached) with %s", len(missing), len(texts), llm.EMBED_MODEL)
         vectors = await llm.embed([DOC_PREFIX + texts[i] for i in missing])
         for i, v in zip(missing, vectors):
             cache[keys[i]] = v
