@@ -84,9 +84,9 @@ function addUser(text) {
 }
 
 function resultTable(columns, rows) {
-  const box = el("div", "tablebox"), t = el("table"), head = el("tr");
+  const box = el("div", "tablebox"), t = el("table"), thead = el("thead"), head = el("tr");
   columns.forEach(c => head.append(el("th", null, c)));
-  t.append(el("thead")).append(head);
+  thead.append(head); t.append(thead);
   const body = el("tbody");
   rows.forEach(r => { const tr = el("tr"); r.forEach(v => tr.append(el("td", null, v === null ? "NULL" : String(v)))); body.append(tr); });
   t.append(body); box.append(t); return box;
