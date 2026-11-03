@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from grantlens.data import seed
+from identity_mcp.data import seed
 
 
 @pytest.fixture(scope="module")

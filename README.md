@@ -1,6 +1,6 @@
-# GrantLens
+# identity-mcp
 
-Ask questions about identity & access data in plain English. GrantLens retrieves a few similar
+Ask questions about identity & access data in plain English. identity-mcp retrieves a few similar
 curated question→SQL examples (few-shot RAG), has Claude write a query, validates it with
 guardrails, runs it read-only on SQLite, and answers in natural language. Exposed as an MCP server
 behind a FastAPI app that also serves a chat UI. A small-scale version of a production
@@ -31,13 +31,13 @@ Prerequisites:
 uv sync
 
 # 2. create the demo database (writes ./app.db; deterministic, safe to re-run)
-uv run python -m grantlens.data.seed
+uv run python -m identity_mcp.data.seed
 
 # 3. run the tests
 uv run pytest
 
 # 4. start the API with auto-reload
-uv run uvicorn grantlens.api.app:app --reload --port 8000
+uv run uvicorn identity_mcp.api.app:app --reload --port 8000
 ```
 
 If port 8000 is taken, pick another with `--port`. Then open:
@@ -51,9 +51,9 @@ Configuration (environment variables):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GRANTLENS_DB` | `./app.db` | SQLite file. Always opened read-only; if missing, REST returns `503` with the seed command |
-| `GRANTLENS_LLM_URL` | `http://localhost:11434` | Ollama server |
-| `GRANTLENS_LLM_MODEL` | `llama3.1:8b` | Model used for both SQL generation and answers |
+| `IDENTITY_MCP_DB` | `./app.db` | SQLite file. Always opened read-only; if missing, REST returns `503` with the seed command |
+| `IDENTITY_MCP_LLM_URL` | `http://localhost:11434` | Ollama server |
+| `IDENTITY_MCP_LLM_MODEL` | `llama3.1:8b` | Model used for both SQL generation and answers |
 
 ## MCP server
 
@@ -66,22 +66,22 @@ The same server is available two ways:
 
 ```sh
 # HTTP: starts with the API above, endpoint http://localhost:8000/mcp
-uv run uvicorn grantlens.api.app:app --port 8000
+uv run uvicorn identity_mcp.api.app:app --port 8000
 
 # stdio: for clients that launch the server themselves
-uv run python -m grantlens.mcp_server
+uv run python -m identity_mcp.mcp_server
 ```
 
 Try the pipeline without MCP:
 
 ```sh
-uv run python -m grantlens.pipeline "Which terminated users still have access?"
+uv run python -m identity_mcp.pipeline "Which terminated users still have access?"
 ```
 
 Connect Claude Code (with the HTTP server running):
 
 ```sh
-claude mcp add --transport http grantlens http://localhost:8000/mcp
+claude mcp add --transport http identity-mcp http://localhost:8000/mcp
 ```
 
 Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with your absolute path:
@@ -89,9 +89,9 @@ Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with y
 ```json
 {
   "mcpServers": {
-    "grantlens": {
+    "identity-mcp": {
       "command": "uv",
-      "args": ["--directory", "/absolute/path/to/this/repo", "run", "python", "-m", "grantlens.mcp_server"]
+      "args": ["--directory", "/absolute/path/to/this/repo", "run", "python", "-m", "identity_mcp.mcp_server"]
     }
   }
 }
@@ -154,9 +154,9 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ## Layout
 
 ```
-src/grantlens/data/   schema.sql, seed.py
-src/grantlens/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/grantlens/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
+src/identity_mcp/data/   schema.sql, seed.py
+src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
+src/identity_mcp/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
 tests/                seed and API tests
 docs/DESIGN.md
 ```

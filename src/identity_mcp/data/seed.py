@@ -1,6 +1,6 @@
-"""Deterministic seed data for the GrantLens demo database.
+"""Deterministic seed data for the identity-mcp demo database.
 
-Run: uv run python -m grantlens.data.seed [--db app.db]
+Run: uv run python -m identity_mcp.data.seed [--db app.db]
 
 Planted findings (counts are exact, see PLANTED below):
   * orphaned access      - terminated users who still hold grants

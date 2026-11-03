@@ -1,5 +1,5 @@
 [project]
-name = "grantlens"
+name = "identity-mcp"
 version = "0.1.0"
 description = "Ask your access-governance data questions in plain English: few-shot RAG over curated examples, guarded SQL, served over MCP."
 readme = "README.md"

@@ -7,8 +7,8 @@ from typing import Any
 
 import httpx
 
-BASE_URL = os.environ.get("GRANTLENS_LLM_URL", "http://localhost:11434")
-MODEL = os.environ.get("GRANTLENS_LLM_MODEL", "llama3.1:8b")
+BASE_URL = os.environ.get("IDENTITY_MCP_LLM_URL", "http://localhost:11434")
+MODEL = os.environ.get("IDENTITY_MCP_LLM_MODEL", "llama3.1:8b")
 
 
 class LLMError(RuntimeError):

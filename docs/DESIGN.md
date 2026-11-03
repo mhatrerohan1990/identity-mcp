@@ -1,4 +1,4 @@
-# GrantLens design
+# identity-mcp design
 
 ## Goal
 Plain-English question in, plain-English answer out, with the SQL, result rows, and the examples
@@ -39,7 +39,7 @@ function handles. The MCP server only exposes tools; the client decides when to 
 if we need durable checkpointed state, human approval before execution, or branching agent flows.
 
 ## Components
-- **Dataset**: `src/grantlens/data/schema.sql` and `seed.py`. Deterministic; planted findings
+- **Dataset**: `src/identity_mcp/data/schema.sql` and `seed.py`. Deterministic; planted findings
   (orphaned access, dormant admins, privileged users without MFA) are asserted in `tests/test_seed.py`.
 - **Example bank**: `examples/examples.md`, ~100-150 curated pairs (id, question, tags, SQL, notes).
   Source of truth; embeddings are cached keyed by file hash.

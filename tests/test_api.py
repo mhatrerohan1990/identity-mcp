@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from grantlens.api.app import app
-from grantlens.data import seed
+from identity_mcp.api.app import app
+from identity_mcp.data import seed
 
 
 @pytest.fixture(scope="module")
@@ -10,7 +10,7 @@ def client(tmp_path_factory):
     path = tmp_path_factory.mktemp("db") / "app.db"
     seed.build(path)
     mp = pytest.MonkeyPatch()
-    mp.setenv("GRANTLENS_DB", str(path))
+    mp.setenv("IDENTITY_MCP_DB", str(path))
     yield TestClient(app)
     mp.undo()
 
@@ -76,5 +76,5 @@ def test_events_date_filter(client):
 
 
 def test_missing_db_is_503(tmp_path, monkeypatch):
-    monkeypatch.setenv("GRANTLENS_DB", str(tmp_path / "nope.db"))
+    monkeypatch.setenv("IDENTITY_MCP_DB", str(tmp_path / "nope.db"))
     assert TestClient(app).get("/users").status_code == 503

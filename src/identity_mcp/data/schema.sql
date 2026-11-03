@@ -1,4 +1,4 @@
--- GrantLens demo schema: a small identity & access governance dataset.
+-- identity-mcp demo schema: a small identity & access governance dataset.
 
 CREATE TABLE users (
     id            INTEGER PRIMARY KEY,

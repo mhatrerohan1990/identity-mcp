@@ -4,9 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp import Client
 
-from grantlens import llm, mcp_server, pipeline
-from grantlens.api.app import app
-from grantlens.data import seed
+from identity_mcp import llm, mcp_server, pipeline
+from identity_mcp.api.app import app
+from identity_mcp.data import seed
 
 
 @pytest.fixture(scope="module")
@@ -14,7 +14,7 @@ def db(tmp_path_factory):
     path = tmp_path_factory.mktemp("db") / "app.db"
     seed.build(path)
     mp = pytest.MonkeyPatch()
-    mp.setenv("GRANTLENS_DB", str(path))
+    mp.setenv("IDENTITY_MCP_DB", str(path))
     yield path
     mp.undo()
 
@@ -97,7 +97,7 @@ def test_mcp_mounted_in_fastapi(db):
             json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                   "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}},
         )
-        assert r.status_code == 200 and "GrantLens" in r.text
+        assert r.status_code == 200 and "identity-mcp" in r.text
         assert client.get("/health").json() == {"status": "ok"}
         assert client.get("/users", params={"limit": 1}).status_code == 200
 
@@ -106,7 +106,7 @@ def test_chat_page_and_ask_endpoint(db, monkeypatch):
     monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM groups", "12 groups."))
     client = TestClient(app)
     page = client.get("/")
-    assert page.status_code == 200 and "text/html" in page.headers["content-type"] and "GrantLens" in page.text
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"] and "identity-mcp" in page.text
     r = client.post("/api/ask", json={"question": "  how many groups?  "})
     assert r.status_code == 200 and r.json()["answer"] == "12 groups." and r.json()["rows"] == [[12]]
     assert client.post("/api/ask", json={"question": ""}).status_code == 422

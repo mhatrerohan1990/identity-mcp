@@ -1,6 +1,6 @@
-"""MCP server exposing one tool, `ask`, over the GrantLens access-governance data.
+"""MCP server exposing one tool, `ask`, over the identity-mcp access-governance data.
 
-stdio (Claude Desktop / Claude Code):  uv run python -m grantlens.mcp_server
+stdio (Claude Desktop / Claude Code):  uv run python -m identity_mcp.mcp_server
 HTTP: mounted at /mcp by the FastAPI app (see api/app.py).
 """
 
@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from . import pipeline
 
 mcp = MCPServer(
-    "GrantLens",
+    "identity-mcp",
     instructions=(
         "Answers plain-English questions about an identity and access governance dataset: users, groups, "
         "applications, entitlements, access grants and activity events. Call `ask` with the user's question."

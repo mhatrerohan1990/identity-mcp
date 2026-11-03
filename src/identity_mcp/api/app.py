@@ -24,7 +24,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="GrantLens API", version="0.1.0", description="Read-only access-governance demo data.", lifespan=lifespan
+    title="identity-mcp API", version="0.1.0", description="Read-only access-governance demo data.", lifespan=lifespan
 )
 
 

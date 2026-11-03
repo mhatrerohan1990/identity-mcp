@@ -3,7 +3,7 @@
 v1: schema in the prompt, one LLM call to write SQL, run it read-only, one LLM call to summarize.
 No retrieval, validation or repair yet; a failure is reported as-is.
 
-Try it: uv run python -m grantlens.pipeline "How many users are terminated?"
+Try it: uv run python -m identity_mcp.pipeline "How many users are terminated?"
 """
 
 from __future__ import annotations
@@ -116,5 +116,5 @@ async def ask(question: str) -> dict[str, Any]:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit('usage: python -m grantlens.pipeline "your question"')
+        sys.exit('usage: python -m identity_mcp.pipeline "your question"')
     print(json.dumps(asyncio.run(ask(" ".join(sys.argv[1:]))), indent=2, default=str))
