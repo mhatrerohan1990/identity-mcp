@@ -1,0 +1,19 @@
+[project]
+name = "grantlens"
+version = "0.1.0"
+description = "Ask your access-governance data questions in plain English: few-shot RAG over curated examples, guarded SQL, served over MCP."
+readme = "README.md"
+authors = [
+    { name = "Rohan Mhatre", email = "mhatrerohan1990@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
