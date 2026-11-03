@@ -1,7 +1,8 @@
 """Question -> SQL -> rows -> natural-language answer.
 
-Schema + retrieved bank examples in the prompt, one LLM call to write SQL, run it read-only, one LLM call to
-summarize. No validation or repair yet; a failure is reported as-is.
+Schema + retrieved bank examples in the prompt, one LLM call to write SQL, validate it (static checks, then an
+EXPLAIN dry run), run it read-only, one LLM call to summarize. A query that fails validation is reported, not
+run. No repair loop yet.
 
 Try it: uv run python -m identity_mcp.pipeline "How many users are terminated?"
 """
@@ -13,14 +14,13 @@ import json
 import sqlite3
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from . import llm, retrieval
-from .db import connect_ro
+from .db import SCHEMA_SQL, connect_ro
 from .logs import configure, flow, new_request_id, one_line
+from .validation import validate
 
-SCHEMA_SQL = (Path(__file__).parent / "data" / "schema.sql").read_text()
 TODAY = "2026-11-01"  # matches the seed data
 MAX_ROWS = 200  # rows returned to the caller
 SUMMARY_ROWS = 50  # rows shown to the LLM when summarizing
@@ -143,18 +143,31 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
         timings["generate_sql"] = round((time.monotonic() - t) * 1000)
         flow.info("generated sql in %d ms: %s", timings["generate_sql"], one_line(out["sql"], 600))
         t = time.monotonic()
-        result = await asyncio.to_thread(execute, out["sql"])
-        timings["execute"] = round((time.monotonic() - t) * 1000)
-        out.update(result)
-        flow.info(
-            "executed in %d ms: %d row(s)%s columns=%s first_row=%s",
-            timings["execute"], result["row_count"], " (truncated)" if result["truncated"] else "",
-            result["columns"], one_line(result["rows"][0], 200) if result["rows"] else "-",
-        )
-        t = time.monotonic()
-        out["answer"] = await summarize(question, out["sql"], result)
-        timings["summarize"] = round((time.monotonic() - t) * 1000)
-        flow.info("summarized in %d ms: %s", timings["summarize"], one_line(out["answer"], 300))
+        check = await asyncio.to_thread(validate, out["sql"])
+        timings["validate"] = round((time.monotonic() - t) * 1000)
+        if not check.ok:  # nothing is executed
+            out["validation_errors"] = check.errors
+            out["error"] = f"Query failed validation ({check.stage}): " + " ".join(check.errors)
+            out["answer"] = (
+                "I couldn't produce a valid query for that question, so I didn't run anything. Problems found:\n"
+                + "\n".join(f"- {e}" for e in check.errors)
+            )
+            flow.warning("validation failed at %s stage in %d ms: %s", check.stage, timings["validate"], " | ".join(check.errors))
+        else:
+            flow.info("validation passed (static + dry run) in %d ms", timings["validate"])
+            t = time.monotonic()
+            result = await asyncio.to_thread(execute, out["sql"])
+            timings["execute"] = round((time.monotonic() - t) * 1000)
+            out.update(result)
+            flow.info(
+                "executed in %d ms: %d row(s)%s columns=%s first_row=%s",
+                timings["execute"], result["row_count"], " (truncated)" if result["truncated"] else "",
+                result["columns"], one_line(result["rows"][0], 200) if result["rows"] else "-",
+            )
+            t = time.monotonic()
+            out["answer"] = await summarize(question, out["sql"], result)
+            timings["summarize"] = round((time.monotonic() - t) * 1000)
+            flow.info("summarized in %d ms: %s", timings["summarize"], one_line(out["answer"], 300))
     except llm.LLMError as e:
         out["error"] = str(e)
         out["answer"] = f"I couldn't reach the language model: {e}"

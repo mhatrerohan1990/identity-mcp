@@ -53,7 +53,8 @@ def test_pipeline_zero_rows_skips_summary_llm(db, monkeypatch):
 def test_pipeline_bad_sql_is_reported_not_raised(db, monkeypatch):
     monkeypatch.setattr(llm, "chat", fake_llm("SELECT nope FROM users"))
     out = run(pipeline.ask("x"))
-    assert "OperationalError" in out["error"] and out["sql"] == "SELECT nope FROM users"
+    assert "'nope' could not be resolved" in out["error"] and out["sql"] == "SELECT nope FROM users"
+    assert out["validation_errors"] and "rows" not in out  # rejected before execution
 
 
 def test_execution_is_read_only(db):

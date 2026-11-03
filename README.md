@@ -17,7 +17,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
 | Question bank: 100 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
-| Harness: SQL guardrails, repair loop, proper eval suite | next |
+| Validation before execution: static checks, then an `EXPLAIN` dry run | done |
+| Harness: repair loop, proper eval suite | next |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback, evals, per-table tools | planned |
 
@@ -109,6 +110,27 @@ Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with y
 Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to `http://localhost:8000/mcp`
 (Streamable HTTP).
 
+## Validation
+
+Generated SQL is validated before it runs; a query that fails is **not executed** and the user is told why.
+
+1. **Static check** (parsed and inspected, never run): exactly one `SELECT`/`WITH...SELECT` (no `DELETE`,
+   `PRAGMA`, `ATTACH`, second statement, `load_extension`, table-valued functions); every table is in the
+   schema; every column resolves against its table (catches invented columns, a column on the wrong
+   table, reused aliases); no `date('now')`/`CURRENT_DATE`, because the data's "today" is fixed at 2026-11-01.
+2. **Dry run**: `EXPLAIN` on the read-only connection, so SQLite itself confirms it can compile the query
+   (catches things like unknown functions) without executing it.
+
+The schema used for checking is read from `schema.sql`, so there is no second copy. On failure `ask`
+returns `validation_errors` (a list of short messages that name the problem and the columns that do
+exist), `error`, and an `answer` explaining that nothing was run; the rejected `sql` is still returned.
+All 100 question-bank queries pass validation (tested), and 18 bad or hostile queries are rejected at the
+right stage.
+
+Validation catches broken and unsafe SQL, not wrong SQL: a valid query that answers the wrong question
+(say, an invented date filter) passes. That is what the examples and the eval are for. The next step feeds
+these messages back to the model for one retry.
+
 ## Logging
 
 Every `ask` is logged to stderr with a request id, so you can follow one question through the whole flow
@@ -122,6 +144,7 @@ Every `ask` is logged to stderr with a request id, so you can follow one questio
                                         --- user --- (the question)
 12:32:06.036 DEBUG [d15e10d7] prompt | ===== LLM response (4091 ms) ===== {"sql": "..."}
 12:32:06.036 INFO  [d15e10d7] flow   | generated sql in 4091 ms: SELECT ...
+12:32:06.040 INFO  [d15e10d7] flow   | validation passed (static + dry run) in 4 ms
 12:32:06.045 INFO  [d15e10d7] flow   | executed in 9 ms: 15 row(s) columns=[...] first_row=[...]
 12:32:08.072 INFO  [d15e10d7] flow   | summarized in 2026 ms: ...
 12:32:08.072 INFO  [d15e10d7] flow   | ask done in 6233 ms
@@ -142,9 +165,8 @@ k=2 to 4. A real gain, but within noise on 16 questions, and `nomic-embed-text` 
 and 0.8, so `IDENTITY_MCP_EXAMPLES_MIN_SCORE` cannot yet filter out irrelevant matches. Remaining
 failures are mostly invented columns and wrong tables, which the guardrails and repair loop will target.
 
-**Known limits of this basic flow.** There is no query validation or repair yet, so
-an 8B model sometimes writes plausible but wrong SQL (invented columns, wrong joins) and the answer
-step can phrase things awkwardly and is slow on long result lists. The guardrails step addresses the first.
+**Known limits of this basic flow.** There is no repair loop yet: invalid SQL is rejected, not retried. An 8B model also sometimes writes
+valid but wrong SQL, and the answer step can phrase things awkwardly and is slow on long result lists.
 The tests use a fake LLM and do not need Ollama.
 
 ## API
@@ -198,7 +220,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask), retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask), validation.py, retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
 tests/                seed, API, MCP and question-bank tests
 docs/DESIGN.md
