@@ -11,10 +11,12 @@ fixed context in the prompt.
 
 ## Architecture
 ```
-Streamlit UI ──MCP client──▶ MCP server (streamable HTTP + stdio)
-                              tools: ask / search_examples / get_schema / run_sql
-                                  │
-                        core pipeline (plain Python, no MCP dependency)
+Browser (static HTML/JS) ──REST──▶ FastAPI app ◀──MCP (streamable HTTP at /mcp)── Claude Desktop / Code
+                                    │   (stdio entrypoint also provided)
+                                    │   REST: /api/ask, /api/feedback, /api/admin/*
+                                    │   MCP tools: ask / search_examples / get_schema / run_sql
+                                    ▼
+                        core pipeline (plain Python, no web or MCP dependency)
                           1. retrieve top-k examples (examples.md → embeddings + BM25)
                           2. prompt = schema DDL + k examples + question
                           3. Claude → {sql, reasoning, tables_used}
@@ -24,6 +26,12 @@ Streamlit UI ──MCP client──▶ MCP server (streamable HTTP + stdio)
                                   │
                        app.db (read-only)    meta.db (feedback, query log)
 ```
+
+## Web layer
+One FastAPI app serves the chat page, the REST API, and the MCP server (FastMCP's streamable-HTTP
+app mounted at `/mcp`). REST routes and MCP tools both call the same core `ask()`, so the two front
+doors cannot drift. The browser uses REST rather than an MCP client: simpler, and MCP stays the
+integration surface for Claude Desktop and Claude Code. The UI is a single static page, no build step.
 
 ## Orchestration
 No LangGraph. The pipeline is a fixed sequence with one bounded repair loop, which a plain
@@ -43,7 +51,7 @@ if we need durable checkpointed state, human approval before execution, or branc
   then an honest "couldn't answer".
 - **Answer step**: Claude summarizes from rows only; must not state numbers absent from the rows.
 - **MCP tools**: `ask(question)`, `search_examples(question, k)`, `get_schema()`, `run_sql(sql)`.
-- **UI**: Streamlit chat; per answer: text, collapsible SQL, result table, retrieved examples with
+- **UI**: static chat page served by FastAPI; per answer: text, collapsible SQL, result table, retrieved examples with
   scores, latency, 👍/👎.
 - **Feedback loop**: votes to `meta.db`; admin view lists 👍 pairs not yet in the bank with a
   "promote to examples.md" action.
@@ -54,8 +62,8 @@ if we need durable checkpointed state, human approval before execution, or branc
 1. ✅ Schema, seed data (+ ~40 examples next)
 2. Core pipeline as a CLI
 3. Guardrails and repair loop, with unit tests
-4. MCP server (MCP Inspector, Claude Desktop)
-5. Streamlit UI
+4. FastAPI app with the MCP server mounted (MCP Inspector, Claude Desktop)
+5. REST API and chat page
 6. Feedback, promote action, evals
 
 ## Out of scope for v1

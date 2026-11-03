@@ -3,7 +3,7 @@
 Ask questions about identity & access data in plain English. GrantLens retrieves a few similar
 curated question→SQL examples (few-shot RAG), has Claude write a query, validates it with
 guardrails, runs it read-only on SQLite, and answers in natural language. Exposed as an MCP server
-with a Streamlit chat UI. A small-scale version of a production governed-query assistant.
+behind a FastAPI app that also serves a chat UI. A small-scale version of a production governed-query assistant.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
