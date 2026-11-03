@@ -130,17 +130,11 @@ def build(db_path: Path) -> dict[str, int]:
     depts = list(DEPARTMENTS)
     weights = [30, 18, 10, 6, 10, 12, 6]  # engineering-heavy
     for uid in range(1, N_USERS + 1):
-        while True:
-            first, last = rng.choice(FIRST), rng.choice(LAST)
-            email = f"{first}.{last}@acme.example".lower()
-            if email not in seen_emails:
-                seen_emails.add(email)
-                break
-            first += str(rng.randint(2, 99))
-            email = f"{first}.{last}@acme.example".lower()
-            if email not in seen_emails:
-                seen_emails.add(email)
-                break
+        first, last = rng.choice(FIRST), rng.choice(LAST)
+        email = f"{first}.{last}@acme.example".lower()
+        while email in seen_emails:  # disambiguate the email only; the display name stays clean
+            email = f"{first}.{last}{rng.randint(2, 99)}@acme.example".lower()
+        seen_emails.add(email)
         dept = rng.choices(depts, weights)[0]
         users.append({
             "id": uid, "email": email, "name": f"{first} {last}", "department": dept,
