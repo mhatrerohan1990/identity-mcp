@@ -16,7 +16,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
 | Harness: example bank + retrieval, SQL guardrails, repair loop | next |
-| Chat UI, feedback, evals, per-table tools | planned |
+| Chat UI (static page + `POST /api/ask`) | done, basic |
+| Feedback, evals, per-table tools | planned |
 
 ## Run it
 
@@ -41,6 +42,8 @@ uv run uvicorn grantlens.api.app:app --reload --port 8000
 
 If port 8000 is taken, pick another with `--port`. Then open:
 
+- **Chat UI: http://localhost:8000/**. Type a question and press Enter. Each answer has collapsible
+  SQL and result-table sections, plus timings. It needs Ollama running (see prerequisites).
 - Interactive docs (try every endpoint in the browser): http://localhost:8000/docs
 - Health check: http://localhost:8000/health
 
@@ -152,7 +155,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 
 ```
 src/grantlens/data/   schema.sql, seed.py
-src/grantlens/api/    app.py (also mounts MCP), routes.py, db.py
+src/grantlens/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
 src/grantlens/        pipeline.py (ask), llm.py (Ollama client), mcp_server.py, db.py
 tests/                seed and API tests
 docs/DESIGN.md

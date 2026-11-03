@@ -100,3 +100,13 @@ def test_mcp_mounted_in_fastapi(db):
         assert r.status_code == 200 and "GrantLens" in r.text
         assert client.get("/health").json() == {"status": "ok"}
         assert client.get("/users", params={"limit": 1}).status_code == 200
+
+
+def test_chat_page_and_ask_endpoint(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM groups", "12 groups."))
+    client = TestClient(app)
+    page = client.get("/")
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"] and "GrantLens" in page.text
+    r = client.post("/api/ask", json={"question": "  how many groups?  "})
+    assert r.status_code == 200 and r.json()["answer"] == "12 groups." and r.json()["rows"] == [[12]]
+    assert client.post("/api/ask", json={"question": ""}).status_code == 422
