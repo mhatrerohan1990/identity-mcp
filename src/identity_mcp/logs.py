@@ -23,24 +23,38 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", 
 
 
 def new_request_id() -> str:
+    """Start a new request scope: make and remember a short id that every log line from this task will carry.
+
+    The id lives in a ``ContextVar``, so concurrent requests each see their own. Called once at the start of
+    ``pipeline.ask``.
+    """
     rid = uuid.uuid4().hex[:8]
     _request_id.set(rid)
     return rid
 
 
 class _Context(logging.Filter):
+    """Logging filter that stamps each record with the current request id and a short component name.
+
+    The formatter uses these (``record.request_id``, ``record.component``) to print lines like
+    ``[d15e10d7] prompt | ...``.
+    """
     def filter(self, record: logging.LogRecord) -> bool:
+        """Attach ``request_id`` and ``component`` to `record`. Always returns True: it annotates, never drops."""
         record.request_id = _request_id.get()
         record.component = record.name.rsplit(".", 1)[-1]
         return True
 
 
 def one_line(text: str, limit: int = 300) -> str:
+    """Collapse `text` onto one line (runs of whitespace become one space) and cut it to `limit` characters with an ellipsis.
+    """
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def block(title: str, body: str) -> str:
+    """Frame multi-line `body` between ``===== title =====`` markers, used for full prompts and raw model replies."""
     return f"===== {title} =====\n{body}\n===== end {title} ====="
 
 

@@ -11,6 +11,10 @@ from ..db import connect_ro
 
 
 def get_db() -> Iterator[sqlite3.Connection]:
+    """FastAPI dependency: a read-only connection for the length of one request.
+
+    Closed afterwards. Responds 503 with the seed command when the database file does not exist.
+    """
     try:
         con = connect_ro()
     except FileNotFoundError as e:

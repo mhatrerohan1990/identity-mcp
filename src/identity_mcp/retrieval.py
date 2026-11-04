@@ -26,15 +26,19 @@ _index: tuple[tuple, list[bank.Example], np.ndarray] | None = None
 
 @dataclass(frozen=True)
 class Hit:
+    """A retrieved bank example and its cosine similarity (0 to 1) to the question."""
     example: bank.Example
     score: float
 
 
 def _cache_file() -> Path:
+    """Path of the embedding cache: ``bank_embeddings.json`` under ``$IDENTITY_MCP_CACHE_DIR`` (default ``.cache``).
+    """
     return Path(os.environ.get("IDENTITY_MCP_CACHE_DIR", ".cache")) / "bank_embeddings.json"
 
 
 def _normalize(m: np.ndarray) -> np.ndarray:
+    """Scale each row (vector) of `m` to length 1, so a dot product between rows equals cosine similarity."""
     return m / np.maximum(np.linalg.norm(m, axis=-1, keepdims=True), 1e-12)
 
 
@@ -55,6 +59,11 @@ async def _document_vectors(texts: list[str]) -> list[list[float]]:
 
 
 async def get_index() -> tuple[list[bank.Example], np.ndarray]:
+    """The in-memory search index: the bank examples and their unit-length embedding matrix.
+
+    Built on first use and rebuilt automatically when the bank file's modification time or the embedding model
+    changes. The embeddings themselves come from the on-disk cache, so only new or edited questions cost a model call.
+    """
     global _index
     path = bank.bank_path()
     stamp = (str(path), path.stat().st_mtime_ns if path.exists() else 0, llm.EMBED_MODEL)

@@ -45,7 +45,7 @@ def test_pipeline_strips_code_fences_and_semicolon(db, monkeypatch):
 
 
 def test_pipeline_zero_rows_skips_summary_llm(db, monkeypatch):
-    monkeypatch.setattr(llm, "chat", fake_llm("SELECT * FROM users WHERE department = 'Mars'", "SHOULD NOT BE USED"))
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT * FROM users WHERE id < 0", "SHOULD NOT BE USED"))
     out = run(pipeline.ask("mars?"))
     assert out["row_count"] == 0 and out["answer"] == "No matching records were found."
 

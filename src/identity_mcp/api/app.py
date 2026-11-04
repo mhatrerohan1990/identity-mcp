@@ -1,3 +1,8 @@
+"""The FastAPI application object.
+
+Routes: ``/health``, ``POST /api/ask`` (the same pipeline as the MCP ``ask`` tool), ``/`` (chat UI), the REST routers
+from ``routes.py``, and the MCP server mounted last at ``/`` (endpoint ``/mcp``)."""
+
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -20,6 +25,8 @@ mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Startup/shutdown for the whole app: configure logging, and run the mounted MCP app's own lifespan (a mounted app's lifespan is not started automatically by its parent).
+    """
     configure()
     async with mcp_app.router.lifespan_context(mcp_app):
         yield
@@ -32,10 +39,12 @@ app = FastAPI(
 
 @app.get("/health", tags=["meta"])
 def health():
+    """Liveness probe. Does not touch the database or the model."""
     return {"status": "ok"}
 
 
 class AskRequest(BaseModel):
+    """Body of ``POST /api/ask``: one non-empty question of at most 1000 characters."""
     question: str = Field(min_length=1, max_length=1000)
 
 
@@ -47,6 +56,7 @@ async def ask(body: AskRequest):
 
 @app.get("/", include_in_schema=False)
 def chat_page():
+    """Serve the single-file chat UI."""
     return FileResponse(STATIC / "index.html")
 
 

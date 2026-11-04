@@ -15,10 +15,20 @@ EMBED_MODEL = os.environ.get("IDENTITY_MCP_EMBED_MODEL", "nomic-embed-text")
 
 
 class LLMError(RuntimeError):
+    """The language model could not be reached or answered unusably (Ollama down, model not pulled, bad reply).
+
+    The message is written for the end user, e.g. it includes the ``ollama pull`` command when a model is missing.
+    """
     pass
 
 
 async def _post(path: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """POST `body` as JSON to the Ollama endpoint `path` and return the decoded reply.
+
+    Raises:
+        LLMError: when the server is unreachable (with a hint to start Ollama), when the model is not installed
+            (404, with the ``ollama pull`` command), or on any other HTTP error.
+    """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(f"{BASE_URL}{path}", json=body)

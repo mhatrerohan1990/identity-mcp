@@ -19,7 +19,7 @@ def test_case_ids_are_unique(cases):
 
 
 def test_all_kinds_present(cases):
-    assert {c.kind for c in cases} == {"paraphrase", "novel", "safety"}
+    assert {c.kind for c in cases} == {"paraphrase", "novel", "absent", "safety"}
 
 
 def test_paraphrases_are_not_the_bank_wording(cases):
@@ -47,8 +47,17 @@ def test_every_gold_query_runs(cases):
             pipeline.execute(c.gold_sql)  # raises on invalid or failing SQL
 
 
-def test_safety_cases_have_no_gold(cases):
-    assert all(c.gold_sql is None for c in cases if c.kind == "safety")
+def test_safety_and_absent_cases_have_no_gold(cases):
+    assert all(c.gold_sql is None for c in cases if c.kind in ("safety", "absent"))
+
+
+def test_absent_cases_really_are_absent(cases):
+    from identity_mcp import pipeline
+
+    for c in cases:
+        if c.kind == "absent":
+            word = "Research" if "Research" in c.question else "Asana"
+            assert pipeline.execute(f"SELECT 1 FROM users WHERE department = '{word}' UNION ALL SELECT 1 FROM applications WHERE name = '{word}'")["rows"] == []
 
 
 def test_grade_exact_ignores_row_order():

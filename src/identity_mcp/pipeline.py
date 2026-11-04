@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import llm, retrieval
+from . import grounding, llm, retrieval
 from .db import SCHEMA_SQL
 from .logs import configure, flow, new_request_id, one_line
 from .validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
@@ -65,6 +65,8 @@ or "they". If several rows share a name, say so and tell them apart by email or 
 
 
 def _strip_fences(sql: str) -> str:
+    """Clean model output into a bare statement: remove a Markdown code fence if present, then trailing semicolons and whitespace.
+    """
     sql = sql.strip()
     if sql.startswith("```"):
         sql = sql.split("\n", 1)[1] if "\n" in sql else ""
@@ -73,6 +75,14 @@ def _strip_fences(sql: str) -> str:
 
 
 def build_sql_system(hits: list[retrieval.Hit]) -> str:
+    """Assemble the system prompt for SQL generation.
+
+    The rules and schema always come first. If retrieval found examples they follow, ordered so the best match is
+    last (closest to the question, where small models weight it most), each with its optional note.
+
+    Args:
+        hits: Retrieved bank examples, best first. May be empty (no examples).
+    """
     if not hits:
         return SQL_SYSTEM_BASE
     blocks = []
@@ -85,6 +95,8 @@ def build_sql_system(hits: list[retrieval.Hit]) -> str:
 
 
 def max_repairs() -> int:
+    """How many times a failed query may be sent back to the model: ``$IDENTITY_MCP_MAX_REPAIRS``, default 2, never below 0.
+    """
     try:
         return max(0, int(os.environ.get("IDENTITY_MCP_MAX_REPAIRS", DEFAULT_MAX_REPAIRS)))
     except ValueError:
@@ -92,10 +104,16 @@ def max_repairs() -> int:
 
 
 def sql_messages(question: str, hits: list[retrieval.Hit]) -> list[dict[str, str]]:
+    """The chat messages for the first SQL attempt: the system prompt (with examples) and the user's question."""
     return [{"role": "system", "content": build_sql_system(hits)}, {"role": "user", "content": question}]
 
 
 async def _request_sql(messages: list[dict[str, str]]) -> str:
+    """Send `messages` to the model with the JSON schema ``{"sql": ...}`` and return the cleaned query.
+
+    Raises:
+        llm.LLMError: if the reply is not the expected JSON.
+    """
     raw = await llm.chat(messages, schema=SQL_SCHEMA)
     try:
         return _strip_fences(json.loads(raw)["sql"])
@@ -104,6 +122,8 @@ async def _request_sql(messages: list[dict[str, str]]) -> str:
 
 
 async def generate_sql(question: str, hits: list[retrieval.Hit] | None = None) -> str:
+    """First attempt at turning `question` into SQL, using the retrieved `hits` as worked examples. No checking happens here.
+    """
     return await _request_sql(sql_messages(question, hits or []))
 
 
@@ -124,6 +144,8 @@ class QueryError(RuntimeError):
 
 
 def _explain_failure(e: sqlite3.Error) -> str:
+    """Turn a SQLite runtime error into a sentence for the user: timeout, value-size limit, sandbox refusal, or the raw error.
+    """
     text = str(e)
     if "interrupted" in text:
         return f"The query ran longer than {QUERY_TIMEOUT_S:g} seconds and was stopped. It is probably missing a join condition or scanning far too much."
@@ -158,6 +180,12 @@ def execute(sql: str) -> dict[str, Any]:
 
 
 async def summarize(question: str, sql: str, result: dict[str, Any]) -> str:
+    """Write the plain-English answer for `question` from the query `result`.
+
+    With zero rows no model call is made and a fixed "No matching records were found." is returned (small models
+    misreport empty results). Otherwise at most ``SUMMARY_ROWS`` rows go to the model, with a note when the list was
+    capped or truncated so the answer can say so.
+    """
     if not result["rows"]:  # handled here: small models misreport emptiness when told how to word it
         return "No matching records were found."
     shown = result["rows"][:SUMMARY_ROWS]
@@ -169,6 +197,16 @@ async def summarize(question: str, sql: str, result: dict[str, Any]) -> str:
         note = f"\n(Only the first {len(shown)} of {result['row_count']} rows are shown here.)"
     user = f"Question: {question}\n\nQuery results ({result['row_count']} rows):\n{table}{note}"
     return (await llm.chat([{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": user}])).strip()
+
+
+def check_sql(sql: str) -> Validation:
+    """Every pre-execution check, in order: well-formed and safe (validation), then filters on real values (grounding)."""
+    result = validate(sql)
+    if result.ok:
+        problems = grounding.check(sql)
+        if problems:
+            return Validation(False, "grounding", problems)
+    return result
 
 
 @dataclass
@@ -197,7 +235,7 @@ async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
     validate_ms = repair_ms = repairs = 0
     while True:
         tv = time.monotonic()
-        check = await asyncio.to_thread(validate, sql)
+        check = await asyncio.to_thread(check_sql, sql)
         validate_ms += round((time.monotonic() - tv) * 1000)
         attempts.append({"sql": sql, "ok": check.ok, "stage": check.stage, "errors": check.errors})
         if check.ok:
@@ -262,10 +300,11 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
             out["validation_errors"] = check.errors
             out["error"] = f"Query failed validation ({check.stage}): " + " ".join(check.errors)
             tried = f" after {out['repairs']} repair attempt(s)" if out["repairs"] else ""
-            out["answer"] = (
-                f"I couldn't produce a valid query for that question{tried}, so I didn't run anything. Problems found:\n"
-                + "\n".join(f"- {e}" for e in check.errors)
-            )
+            if check.stage == "grounding":
+                intro = f"I couldn't find some of what you asked about in the data{tried}, so I didn't run anything:"
+            else:
+                intro = f"I couldn't produce a valid query for that question{tried}, so I didn't run anything. Problems found:"
+            out["answer"] = intro + "\n" + "\n".join(f"- {e}" for e in check.errors)
         else:
             t = time.monotonic()
             result = await asyncio.to_thread(execute, out["sql"])

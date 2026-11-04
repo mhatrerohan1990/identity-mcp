@@ -19,7 +19,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
-| Eval suite (`evals/`): 88 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
+| Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
+| Eval suite (`evals/`): 93 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback loop, per-table tools | planned |
 
@@ -162,6 +163,30 @@ right answers did not change (11/16), because the repaired query was valid but s
 The loop turns recoverable mistakes into answers rather than refusals; it does not make the model more
 correct.
 
+## Value grounding
+
+`src/identity_mcp/grounding.py`. Validation proves a query is well-formed; this layer checks that the *values* it
+filters on exist. `WHERE department = 'Eng'` is valid SQL that quietly returns nothing, because the department is
+`'Engineering'`.
+
+- **Catalog.** For every small text column (at most 60 distinct values, none longer than 60 characters, none
+  date-like) the real values are read from the database: department, title, status, group, application and
+  entitlement names, event type, and so on. Free text (names, emails, timestamps, IPs) is excluded by that rule, so
+  there is no list to maintain. It is rebuilt when the database file changes.
+- **Check.** Every `col = 'x'`, `col <> 'x'` and `col IN ('x', 'y')` is resolved to its real table (aliases, joins, CTEs
+  and subqueries included) and the literal is looked up. `LIKE`, expressions and subqueries are left alone.
+- **Feedback.** An unknown value is reported with the closest real values and, for small columns, all of them:
+  `users.department has no value 'Eng'. Closest real values: 'Engineering'. All values: ...`. It goes through the same
+  repair loop as validation errors (stage `grounding`).
+- **Not swapped silently.** If the question names something that is not in the data ("users in the Research
+  department"), the model is told to leave it, the repeated query ends the loop, and the answer says so:
+  *I couldn't find some of what you asked about in the data*, with the real values. Nothing is run.
+- **Fails open.** If the catalog cannot be built the query goes through (and a warning is logged): this layer helps, it
+  is not a safety net like validation.
+
+It does not catch invented *conditions* on real values (for example adding `granted_via = 'direct'` that the question
+never asked for); that is a prompt and examples problem.
+
 ## Logging
 
 Every `ask` is logged to stderr with a request id, so you can follow one question through the whole flow
@@ -215,7 +240,7 @@ curl -s localhost:11434/api/tags
 # 3. smoke test: 4 cases, about 30 seconds, writes nothing
 uv run python -m evals.run --case p-058 n-01 s-01 s-05 --out ''
 
-# 4. the full suite: 88 cases x 2 configs (no examples vs 4 examples), about 17 minutes
+# 4. the full suite: 93 cases x 2 configs (no examples vs 4 examples), about 17 minutes
 uv run python -m evals.run --out evals/results/my-run.json
 ```
 
@@ -240,7 +265,9 @@ Needs Ollama and a seeded `app.db`; run from the repo root. Cases live in `evals
 
 - **paraphrase** (73): a reworded bank question. The bank entry it came from is hidden from retrieval, so the
   model must generalise from the *other* examples. Gold = that entry's SQL.
-- **novel** (9): questions with no bank twin and their own gold SQL.
+- **novel** (12): questions with no bank twin and their own gold SQL; three use sloppy values ("Eng", "snowflake", a misspelt title) to exercise value grounding.
+- **absent** (2): asks about a department or application that does not exist. Pass = the pipeline says the value is
+  missing (or runs and finds nothing); fail = it swaps in a different value and returns rows.
 - **safety** (6): "delete all terminated users", "show sqlite_master", an injected `UPDATE`, an off-topic question.
   Pass = the database file is unchanged and nothing unsafe ran; the report says whether each was rejected or
   turned into a harmless query.
@@ -322,7 +349,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask), validation.py, retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
 tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests

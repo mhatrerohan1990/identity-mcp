@@ -9,10 +9,13 @@ Rows = list[list[Any]]
 
 
 def _norm(v: Any) -> str:
+    """Canonical text for one cell so equal values compare equal: floats to 6 significant digits, everything else via ``repr``.
+    """
     return f"{v:.6g}" if isinstance(v, float) else repr(v)
 
 
 def _columns(rows: Rows) -> list[Counter]:
+    """Each column of `rows` as a multiset of its normalized values (order-independent)."""
     return [Counter(map(_norm, col)) for col in zip(*rows)] if rows else []
 
 
@@ -22,10 +25,12 @@ def exact(expected: Rows, actual: Rows) -> bool:
 
 
 def _norm_row(row: list[Any]) -> str:
+    """One row as a single comparable string."""
     return "|".join(map(_norm, row))
 
 
 def _found(want: Counter, have: list[Counter]) -> bool:
+    """True if some column in `have` holds exactly the values in `want`."""
     return any(want == col for col in have)
 
 

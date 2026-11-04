@@ -54,6 +54,13 @@ class ValidationError(ValueError):
 
 @dataclass
 class Validation:
+    """Result of checking a query before it runs.
+
+    Attributes:
+        ok: True when the query may be executed.
+        stage: Which check rejected it: ``static``, ``dry_run`` or (added by ``pipeline.check_sql``) ``grounding``.
+        errors: Plain-language reasons, written so the model can act on them in the repair loop.
+    """
     ok: bool
     stage: str | None = None  # "static" or "dry_run" when ok is False
     errors: list[str] = field(default_factory=list)
@@ -81,6 +88,8 @@ def _authorizer(forbidden: frozenset[str]):
     subquery name is not a real object, so recursive queries over their own name keep working.
     """
     def authorize(action: int, arg1: str | None, arg2: str | None, db: str | None, source: str | None) -> int:
+        """SQLite calls this for every operation while compiling a query; return OK or DENY (the action codes are SQLite's).
+        """
         if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE):
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_READ:
@@ -121,6 +130,15 @@ def _links(where: exp.Expression | None, alias: str) -> bool:
 
 
 def _join_problems(tree: exp.Expression) -> list[str]:
+    """Report joins that would pair every row with every row.
+
+    A join is fine if it has an ``ON`` containing a column, ``USING``, ``NATURAL``, or (for comma/CROSS joins) a
+    ``WHERE`` equality linking the table to another. ``ON TRUE`` and ``ON 1 = 1`` do not count. This is the usual
+    cause of queries that run until the timeout.
+
+    Returns:
+        One message per offending join; empty when all joins are conditioned.
+    """
     problems = []
     for select in tree.find_all(exp.Select):
         for join in select.args.get("joins") or []:

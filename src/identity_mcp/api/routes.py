@@ -18,6 +18,8 @@ GrantedVia = Literal["direct", "group"]
 
 
 class Page:
+    """Pagination parameters shared by every list endpoint: ``limit`` (1 to 200, default 50) and ``offset`` (default 0).
+    """
     def __init__(
         self,
         limit: Annotated[int, Query(ge=1, le=200, description="Page size")] = 50,
@@ -43,6 +45,7 @@ def paginate(con: sqlite3.Connection, select: str, from_: str, conds: list[tuple
 
 
 def get_one(con: sqlite3.Connection, table: str, id_: int, label: str) -> dict:
+    """Fetch one row of `table` by id as a dict, or raise 404 saying "`label` `id_` not found"."""
     row = con.execute(f"SELECT * FROM {table} WHERE id = ?", (id_,)).fetchone()
     if row is None:
         raise HTTPException(404, f"{label} {id_} not found")
@@ -70,6 +73,8 @@ def list_users(
     manager_id: int | None = None,
     q: Annotated[str | None, Query(description="Substring match on name or email")] = None,
 ):
+    """List users, newest id last. Filters: status, department, mfa_enabled, manager_id, and `q` (substring of name or email).
+    """
     return paginate(con, "*", "users", [
         ("status = ?", status), ("department = ?", department),
         ("mfa_enabled = ?", None if mfa_enabled is None else int(mfa_enabled)),
@@ -80,23 +85,27 @@ def list_users(
 
 @users.get("/{user_id}")
 def get_user(user_id: int, con: DB):
+    """One user by id."""
     return get_one(con, "users", user_id, "user")
 
 
 @users.get("/{user_id}/grants")
 def user_grants(user_id: int, con: DB, page: P):
+    """Access grants held by a user (direct and group-inherited), with entitlement and application names."""
     get_one(con, "users", user_id, "user")
     return paginate(con, GRANT_SELECT, GRANT_FROM, [("g.user_id = ?", user_id)], page, "g.id")
 
 
 @users.get("/{user_id}/groups")
 def user_groups(user_id: int, con: DB, page: P):
+    """Groups the user belongs to."""
     get_one(con, "users", user_id, "user")
     return paginate(con, MEMBER_SELECT, MEMBER_FROM, [("m.user_id = ?", user_id)], page, "g.name")
 
 
 @users.get("/{user_id}/activity")
 def user_activity(user_id: int, con: DB, page: P):
+    """Activity events for a user, newest first."""
     get_one(con, "users", user_id, "user")
     return paginate(con, "*", "activity_events", [("user_id = ?", user_id)], page, "ts DESC")
 
@@ -107,16 +116,19 @@ groups = APIRouter(prefix="/groups", tags=["groups"])
 
 @groups.get("")
 def list_groups(con: DB, page: P, is_privileged: bool | None = None):
+    """List groups. Filter: is_privileged."""
     return paginate(con, "*", "groups", [("is_privileged = ?", None if is_privileged is None else int(is_privileged))], page, "id")
 
 
 @groups.get("/{group_id}")
 def get_group(group_id: int, con: DB):
+    """One group by id."""
     return get_one(con, "groups", group_id, "group")
 
 
 @groups.get("/{group_id}/members")
 def group_members(group_id: int, con: DB, page: P):
+    """Members of a group, ordered by name."""
     get_one(con, "groups", group_id, "group")
     return paginate(con, MEMBER_SELECT, MEMBER_FROM, [("m.group_id = ?", group_id)], page, "u.name")
 
@@ -127,6 +139,7 @@ memberships = APIRouter(prefix="/group-members", tags=["group-members"])
 
 @memberships.get("")
 def list_memberships(con: DB, page: P, group_id: int | None = None, user_id: int | None = None):
+    """List group memberships. Filters: group_id, user_id."""
     return paginate(con, MEMBER_SELECT, MEMBER_FROM, [("m.group_id = ?", group_id), ("m.user_id = ?", user_id)], page, "m.group_id, m.user_id")
 
 
@@ -141,6 +154,7 @@ def list_applications(
     integration: Integration | None = None,
     owner_user_id: int | None = None,
 ):
+    """List applications. Filters: criticality, integration, owner_user_id."""
     return paginate(con, "*", "applications", [
         ("criticality = ?", criticality), ("integration = ?", integration), ("owner_user_id = ?", owner_user_id),
     ], page, "id")
@@ -148,11 +162,13 @@ def list_applications(
 
 @applications.get("/{app_id}")
 def get_application(app_id: int, con: DB):
+    """One application by id."""
     return get_one(con, "applications", app_id, "application")
 
 
 @applications.get("/{app_id}/entitlements")
 def application_entitlements(app_id: int, con: DB, page: P):
+    """Entitlements defined by an application."""
     get_one(con, "applications", app_id, "application")
     return paginate(con, "*", "entitlements", [("app_id = ?", app_id)], page, "id")
 
@@ -163,11 +179,13 @@ entitlements = APIRouter(prefix="/entitlements", tags=["entitlements"])
 
 @entitlements.get("")
 def list_entitlements(con: DB, page: P, app_id: int | None = None, is_admin: bool | None = None):
+    """List entitlements. Filters: app_id, is_admin."""
     return paginate(con, "*", "entitlements", [("app_id = ?", app_id), ("is_admin = ?", None if is_admin is None else int(is_admin))], page, "id")
 
 
 @entitlements.get("/{entitlement_id}")
 def get_entitlement(entitlement_id: int, con: DB):
+    """One entitlement by id."""
     return get_one(con, "entitlements", entitlement_id, "entitlement")
 
 
@@ -185,6 +203,8 @@ def list_grants(
     granted_via: GrantedVia | None = None,
     is_admin: bool | None = None,
 ):
+    """List access grants with user, entitlement and application names. Filters include user, entitlement, application, how it was granted.
+    """
     return paginate(con, GRANT_SELECT, GRANT_FROM, [
         ("g.user_id = ?", user_id), ("g.entitlement_id = ?", entitlement_id), ("e.app_id = ?", app_id),
         ("g.group_id = ?", group_id), ("g.granted_via = ?", granted_via),
@@ -194,6 +214,7 @@ def list_grants(
 
 @grants.get("/{grant_id}")
 def get_grant(grant_id: int, con: DB):
+    """One access grant by id."""
     row = con.execute(f"SELECT {GRANT_SELECT} FROM {GRANT_FROM} WHERE g.id = ?", (grant_id,)).fetchone()
     if row is None:
         raise HTTPException(404, f"access grant {grant_id} not found")
@@ -214,6 +235,7 @@ def list_events(
     since: Annotated[str | None, Query(description="ISO date/datetime, inclusive")] = None,
     until: Annotated[str | None, Query(description="ISO date/datetime, exclusive")] = None,
 ):
+    """List activity events, newest first. Filters include user, application, event type, success and a time range."""
     return paginate(con, "*", "activity_events", [
         ("user_id = ?", user_id), ("app_id = ?", app_id), ("event_type = ?", event_type),
         ("success = ?", None if success is None else int(success)),
@@ -223,6 +245,7 @@ def list_events(
 
 @events.get("/{event_id}")
 def get_event(event_id: int, con: DB):
+    """One activity event by id."""
     return get_one(con, "activity_events", event_id, "activity event")
 
 

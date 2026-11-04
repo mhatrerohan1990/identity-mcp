@@ -32,26 +32,34 @@ from identity_mcp.logs import configure
 from . import cases as cases_mod
 from . import metrics
 
-PASS = {"exact", "complete", "entities"}
+PASS = {"exact", "complete", "entities", "reported_missing", "empty"}
 
 
 @dataclass(frozen=True)
 class Config:
+    """One way of running the suite: `k` examples retrieved per question (0 = none) and up to `repairs` retries."""
     k: int
     repairs: int
 
     @property
     def name(self) -> str:
+        """Label used in reports and in the saved JSON, e.g. ``k=4 repairs=2``."""
         return f"k={self.k} repairs={self.repairs}"
 
 
 @dataclass
 class Result:
+    """What happened for one case under one config; saved to the JSON report.
+
+    ``outcome`` is the headline: ``exact``/``complete``/``entities`` (right rows), ``wrong``, ``rejected`` (no valid
+    query), ``exec_error``, ``llm_error``, ``harmless`` (safety case ran a safe query), ``reported_missing``/``empty``
+    (absent-value case handled correctly), ``database_changed`` (a safety failure).
+    """
     case: str
     kind: str
     config: str
     question: str
-    outcome: str  # exact | complete | entities | wrong | rejected | exec_error | llm_error | harmless (safety)
+    outcome: str  # exact | complete | entities | wrong | rejected | exec_error | llm_error | harmless (safety) | reported_missing | empty (absent)
     sql: str | None = None
     first_try_valid: bool | None = None
     repairs: int = 0
@@ -63,14 +71,18 @@ class Result:
 
 
 def _fingerprint() -> str:
+    """SHA-256 of the database file, to prove a safety case changed nothing."""
     return hashlib.sha256(Path(db_path()).read_bytes()).hexdigest()
 
 
 def _rows(sql: str) -> list[list[Any]]:
+    """Run `sql` through the production executor and return just the rows."""
     return pipeline.execute(sql)["rows"]
 
 
 async def run_case(case: cases_mod.Case, cfg: Config) -> Result:
+    """Run one case end to end (retrieve, generate, validate, repair, execute) and grade it. Never raises for expected failures; they become outcomes.
+    """
     started = time.monotonic()
     res = Result(case.id, case.kind, cfg.name, case.question, "llm_error")
     before = _fingerprint() if case.kind == "safety" else None
@@ -87,13 +99,17 @@ async def run_case(case: cases_mod.Case, cfg: Config) -> Result:
     res.first_errors = [] if res.first_try_valid else draft.attempts[0]["errors"]
     if not draft.check.ok:
         res.outcome, res.final_errors = "rejected", draft.check.errors
+        if case.kind == "absent" and any("has no value" in e for e in draft.check.errors):
+            res.outcome = "reported_missing"
     else:
         try:
             actual = await asyncio.to_thread(_rows, draft.sql)
         except Exception as e:  # a failed run is a result, not a crash
             res.outcome, res.detail = "exec_error", f"{type(e).__name__}: {e}"
         else:
-            if case.gold_sql is None:
+            if case.kind == "absent":
+                res.outcome = "empty" if not actual else "wrong"
+            elif case.gold_sql is None:
                 res.outcome = "harmless"
             else:
                 res.outcome = metrics.grade(_rows(case.gold_sql), actual)
@@ -104,6 +120,8 @@ async def run_case(case: cases_mod.Case, cfg: Config) -> Result:
 
 
 def summarize(results: list[Result]) -> dict[str, Any]:
+    """Aggregate one config's results into counts: passes by tier, rejections, first-try validity, repairs, safety outcomes, median time.
+    """
     scored = [r for r in results if r.kind != "safety"]
     safety = [r for r in results if r.kind == "safety"]
     n = len(scored)
@@ -132,8 +150,9 @@ def summarize(results: list[Result]) -> dict[str, Any]:
 
 
 def by_kind(results: list[Result]) -> dict[str, str]:
+    """Pass counts per case kind as ``"passed/total"`` strings."""
     out = {}
-    for kind in ("paraphrase", "novel"):
+    for kind in ("paraphrase", "novel", "absent"):
         rs = [r for r in results if r.kind == kind]
         if rs:
             out[kind] = f"{sum(r.outcome in PASS for r in rs)}/{len(rs)}"
@@ -141,6 +160,7 @@ def by_kind(results: list[Result]) -> dict[str, str]:
 
 
 def render(summaries: dict[str, dict], kinds: dict[str, dict]) -> str:
+    """Format the per-config summaries as a side-by-side text table."""
     names = list(summaries)
     rows = [
         ("pass (right rows)", lambda s, n: f"{s['pass']}/{s['scored_cases']}"),
@@ -152,6 +172,7 @@ def render(summaries: dict[str, dict], kinds: dict[str, dict]) -> str:
         ("failed to run / model error", lambda s, n: s["exec_error"] + s["llm_error"]),
         ("  paraphrase pass", lambda s, n: kinds[n].get("paraphrase", "-")),
         ("  novel pass", lambda s, n: kinds[n].get("novel", "-")),
+        ("  absent-value pass", lambda s, n: kinds[n].get("absent", "-")),
         ("valid on first try", lambda s, n: f"{s['valid_first_try']}/{s['valid_first_try'] + s['invalid_first_try']}"),
         ("repaired to valid", lambda s, n: f"{s['repaired_to_valid']}/{s['invalid_first_try']}"),
         ("repair calls", lambda s, n: s["repair_calls"]),
@@ -179,6 +200,8 @@ def diffs(results: list[Result], names: list[str]) -> list[str]:
 
 
 async def main(args: argparse.Namespace) -> None:
+    """Run the selected cases under each config, print progress, the comparison table and the cases whose outcome differs, and optionally save JSON.
+    """
     if args.verbose:
         configure()
     else:  # per-case progress lines are the output; the pipeline's own logs would bury them
@@ -216,10 +239,11 @@ async def main(args: argparse.Namespace) -> None:
 
 
 def cli() -> None:
+    """Parse command-line options and run ``main``. See the module docstring for examples."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--k", type=int, nargs="+", default=[0, 4], help="examples retrieved per question (0 = none)")
     p.add_argument("--repairs", type=int, nargs="+", default=[2], help="max repair attempts")
-    p.add_argument("--kind", nargs="+", choices=["paraphrase", "novel", "safety"])
+    p.add_argument("--kind", nargs="+", choices=["paraphrase", "novel", "absent", "safety"])
     p.add_argument("--case", nargs="+", help="case ids, e.g. p-058 s-01")
     p.add_argument("--limit", type=int, help="first N selected cases")
     p.add_argument("--verbose", action="store_true", help="show the pipeline's flow/prompt logs")
