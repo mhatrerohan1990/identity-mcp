@@ -118,3 +118,23 @@ def test_retrieval_check_scores_every_mode_with_fake_embeddings():
         assert s.cases == 73 and 0.0 <= s.recall <= 1.0 and 0.0 <= s.mrr <= 1.0
     lexical = asyncio.run(retrieval_check.evaluate("lexical", k=4))
     assert lexical.recall > 0.3  # keyword search alone finds a decent share of twins (no model involved)
+
+
+def test_table_and_jaccard_helpers():
+    from evals.retrieval_check import jaccard, tables_in
+
+    assert tables_in("SELECT * FROM users u JOIN access_grants g ON g.user_id = u.id") == {"users", "access_grants"}
+    assert tables_in("SELECT 1") == frozenset()
+    assert tables_in("SELECT group_id FROM group_members") == {"group_members"}  # 'groups' is not found inside 'group_id'
+    assert jaccard({"a", "b"}, {"b", "c"}) == 1 / 3 and jaccard(set(), set()) == 1.0 and jaccard({"a"}, {"b"}) == 0.0
+
+
+def test_held_out_check_runs_for_every_mode_with_sane_numbers():
+    import asyncio
+
+    from evals import retrieval_check
+
+    for mode in ("dense", "hybrid", "lexical"):
+        h = asyncio.run(retrieval_check.evaluate_held_out(mode, k=4))
+        assert h.cases == 73 and all(0.0 <= v <= 1.0 for v in (h.same_tables, h.table_overlap, h.tag_overlap))
+    assert asyncio.run(retrieval_check.evaluate_held_out("lexical", k=4)).same_tables > 0.3

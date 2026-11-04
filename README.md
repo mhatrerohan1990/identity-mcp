@@ -16,7 +16,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Qwen via Ollama) | done, basic flow |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
-| Retrieval (RAG) of similar bank examples into the SQL prompt: embeddings + BM25 keywords, fused | done, hybrid not yet measured against the model |
+| Retrieval (RAG) of similar bank examples into the SQL prompt: embeddings + BM25 keywords, fused | done; dense is the default, hybrid is opt-in and unproven |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
@@ -63,7 +63,7 @@ Configuration (environment variables):
 | `IDENTITY_MCP_EMBED_MODEL` | `nomic-embed-text` | Embedding model for example retrieval |
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
 | `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to enter the embedding ranking (the keyword ranking needs a shared word instead) |
-| `IDENTITY_MCP_RETRIEVAL` | `hybrid` | Retrieval strategy: `hybrid`, `dense` (embeddings only) or `lexical` (keywords only, no embedding model) |
+| `IDENTITY_MCP_RETRIEVAL` | `dense` | Retrieval strategy: `dense` (embeddings), `hybrid` (embeddings + BM25 keywords) or `lexical` (keywords only, no embedding model) |
 | `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
 | `IDENTITY_MCP_MAX_REPAIRS` | `2` | Retries after a query fails validation; `0` disables the repair loop |
 | `IDENTITY_MCP_LOG_LEVEL` | `INFO` | Level for the flow log (`DEBUG`, `INFO`, `WARNING`, ...) |
@@ -211,7 +211,7 @@ The `prompt` lines are the exact messages sent to Ollama and its raw replies, an
 per question). Set `IDENTITY_MCP_LOG_PROMPTS=0` to keep only the one-line `flow` steps. Prompts and the
 answer-step prompt contain query results, so treat these logs as sensitive once the data is real.
 
-**How retrieval works.** Hybrid: two rankings of the bank are merged.
+**How retrieval works.** Dense by default; an opt-in hybrid mode merges two rankings of the bank.
 
 - *Dense* (`retrieval.py`): the bank's 104 questions are embedded once (cached in `.cache/`) and ranked by cosine
   similarity to the question. Good at paraphrase, but `nomic-embed-text` scores cluster between 0.5 and 0.8, so it is
@@ -222,10 +222,13 @@ answer-step prompt contain query results, so treat these logs as sensitive once 
 - *Fusion*: reciprocal rank fusion, `1 / (60 + rank)` summed over the rankings, so the two score scales never need
   reconciling. The best `k` become worked examples in the SQL prompt (question, SQL and notes), best match last.
 
-`IDENTITY_MCP_RETRIEVAL=dense|lexical|hybrid` switches strategy (default `hybrid`). `ask` returns the entries it used in
+`IDENTITY_MCP_RETRIEVAL=dense|hybrid|lexical` switches strategy. The default is `dense`: on the source-entry check it found the
+right entry as often as hybrid (recall@4 0.99 both) and ranked it slightly higher (MRR 0.95 vs 0.92), so hybrid stays
+opt-in until it wins on the held-out check. `ask` returns the entries it used in
 `examples` (id, question, score). If the embedding model is unavailable it answers without examples and sets
-`warning`. To check retrieval alone, without the chat model: `uv run python -m evals.retrieval_check` (recall@k and MRR of
-each paraphrase's source entry per strategy).
+`warning`. To check retrieval alone, without the chat model: `uv run python -m evals.retrieval_check`. It reports (1) recall@k and MRR of
+each paraphrase's source entry, and (2) with that entry hidden, how closely the remaining examples match its tables and tags.
+The result for `dense` is 0.99 / 0.95 on (1); hybrid and lexical are opt-in until they win on (2).
 
 **How much it helps (measured, small sample).** 16 reworded questions, each with its own bank entry
 hidden, scored by whether the result contains the right entities: 8/16 without examples, 9 to 11/16 with

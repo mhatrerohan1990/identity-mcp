@@ -124,12 +124,12 @@ def test_fusion_rewards_agreement_between_the_rankings():
     assert retrieval._fuse([]) == {}
 
 
-def test_default_mode_is_hybrid_and_bad_values_fall_back(monkeypatch):
-    assert retrieval.mode() == "hybrid"
+def test_default_mode_is_dense_and_bad_values_fall_back(monkeypatch):
+    assert retrieval.mode() == "dense"
     monkeypatch.setenv("IDENTITY_MCP_RETRIEVAL", "Lexical ")
     assert retrieval.mode() == "lexical"
     monkeypatch.setenv("IDENTITY_MCP_RETRIEVAL", "nonsense")
-    assert retrieval.mode() == "hybrid"
+    assert retrieval.mode() == "dense"
 
 
 def test_hybrid_finds_what_the_keyword_side_knows_and_embeddings_miss(monkeypatch):
@@ -142,6 +142,7 @@ def test_hybrid_finds_what_the_keyword_side_knows_and_embeddings_miss(monkeypatc
 
 
 def test_hits_carry_both_scores_and_the_best_is_first(monkeypatch):
+    monkeypatch.setenv("IDENTITY_MCP_RETRIEVAL", "hybrid")
     hits = run(retrieval.retrieve(REWORDED, k=4, min_score=0.0))
     assert hits[0].score <= 1.0 and all(a.score >= b.score for a, b in zip(hits, hits[1:]))
     assert all(h.dense is not None or h.lexical is not None for h in hits)

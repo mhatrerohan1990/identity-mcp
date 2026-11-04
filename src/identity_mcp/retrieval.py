@@ -9,8 +9,10 @@ Two rankings of the bank are computed and fused:
 
 They are merged with reciprocal rank fusion: an entry scores ``1 / (60 + rank)`` in each list that contains it, and
 the scores are added. Only ranks are used, so the two score scales never have to be reconciled. The best ``k``
-become few-shot examples for SQL generation. ``IDENTITY_MCP_RETRIEVAL`` selects ``hybrid`` (default), ``dense`` or
-``lexical`` so the strategies can be compared or one switched off.
+become few-shot examples for SQL generation. ``IDENTITY_MCP_RETRIEVAL`` selects ``dense`` (default), ``hybrid`` or
+``lexical``. Dense is the default because on ``evals.retrieval_check`` it found a reworded question's source entry
+at least as well as hybrid (recall@4 0.99 for both, MRR 0.95 against 0.92); hybrid is kept so it can be compared on
+the held-out check and promoted only if it wins there.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from .logs import flow
 K = int(os.environ.get("IDENTITY_MCP_EXAMPLES_K", "4"))
 MIN_SCORE = float(os.environ.get("IDENTITY_MCP_EXAMPLES_MIN_SCORE", "0.5"))
 DOC_PREFIX, QUERY_PREFIX = "search_document: ", "search_query: "  # required by nomic-embed-text
-MODES = ("hybrid", "dense", "lexical")
+MODES = ("dense", "hybrid", "lexical")
 RRF_K = 60  # reciprocal rank fusion constant: larger values flatten the difference between rank 1 and rank 5
 
 _index: tuple[tuple, list[bank.Example], np.ndarray] | None = None
@@ -37,9 +39,9 @@ _lexical: tuple[int, lexical.LexicalIndex] | None = None
 
 
 def mode() -> str:
-    """The retrieval strategy: ``$IDENTITY_MCP_RETRIEVAL`` (``hybrid``, ``dense`` or ``lexical``), default ``hybrid``."""
-    value = os.environ.get("IDENTITY_MCP_RETRIEVAL", "hybrid").strip().lower()
-    return value if value in MODES else "hybrid"
+    """The retrieval strategy: ``$IDENTITY_MCP_RETRIEVAL`` (``dense``, ``hybrid`` or ``lexical``), default ``dense``."""
+    value = os.environ.get("IDENTITY_MCP_RETRIEVAL", "dense").strip().lower()
+    return value if value in MODES else "dense"
 
 
 @dataclass(frozen=True)
