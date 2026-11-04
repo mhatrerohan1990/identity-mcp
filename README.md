@@ -14,7 +14,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 |---|---|
 | Schema + deterministic seed data | done |
 | Simple read-only REST API per entity | done |
-| MCP server with one `ask` tool (question → SQL → rows → answer, local Qwen via Ollama) | done, basic flow |
+| MCP server with two scoped tools, `query_identity` and `query_activity` (question → SQL → rows, local Qwen via Ollama) | done |
+| Hand-off between tools: a result id one tool returns, the next filters on (`handoff.py`) | done |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt (embeddings) | done; hybrid with BM25 tried and dropped, no gain |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
@@ -29,7 +30,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 
 Prerequisites:
 - [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
-- [Ollama](https://ollama.com) running locally with a model pulled, only needed for the `ask` tool:
+- [Ollama](https://ollama.com) running locally with a model pulled, only needed for questions:
   `ollama pull qwen2.5-coder:14b` (about 9 GB; wants 16 GB+ of RAM) and `ollama pull nomic-embed-text`
   (the REST API and tests do not need them). On a smaller machine use `llama3.1:8b` (see the model table under Evals).
 
@@ -72,10 +73,27 @@ Configuration (environment variables):
 
 ## MCP server
 
-One tool, `ask(question)`. It sends the question and the schema to the LLM, which writes a SQL query;
-the query runs read-only (5s limit, 200-row cap); the LLM then turns the rows into a plain-English
-answer. It returns `answer`, `sql`, `columns`, `rows`, `row_count`, `truncated`, `timings_ms`, and
-`error` if something failed.
+Two tools, each the same guarded question-to-SQL pipeline restricted to its own tables (`scopes.py`):
+
+| Tool | Sees | For |
+|---|---|---|
+| `query_identity(question, filter_from?)` | users, groups, group_members, applications, entitlements, access_grants | who exists, who can access what |
+| `query_activity(question, filter_from?)` | activity_events, users, applications | what users did: logins, reads, writes, admin actions |
+
+A tool's scope is enforced three times: the prompt shows only its tables, validation rejects any other table, and the
+SQLite sandbox refuses to read one even if both were bypassed. Only bank examples that read in-scope tables are retrieved.
+
+**Questions that need both sides take two calls.** "Show me dormant admin accounts" is: `query_identity("active users with
+admin access")`, then `query_activity("which of these users had no activity in the last 90 days?", filter_from={result_id,
+column: "id"})`. Each call returns `columns`, the first 25 `rows`, `row_count`, `truncated`, the `sql` that ran, a `result_id`
+and, on failure, `error`. No prose answer is written: the caller reasons over the rows. Chaining is the *client's* job
+(any MCP client; our own is `agent.py`), as it is when the data live in separate stores.
+
+How the hand-off works (`handoff.py`): results are kept in server memory under their `result_id` for 30 minutes (at most 50;
+one server process). `filter_from` names a result and an id column (`id`, `*_id` or `email`; names are refused because they
+repeat). The server looks the values up itself, so the model never copies ids, and the query sees them as a table,
+`input(value)`. A query that does not read `input` is rejected and repaired, because otherwise it would silently answer about
+everyone. "Which of these have *no* activity" works because the query can start `FROM input ... WHERE NOT EXISTS (...)`.
 
 The same server is available two ways:
 
@@ -181,7 +199,7 @@ Everything after the rewrite (retrieval, SQL generation, validation, grounding, 
 and is unchanged.
 
 - **Stateless server.** The client sends the earlier turns with each question; nothing is stored. The chat page keeps them in the
-  browser tab (a **New chat** button clears them; a refresh does too). MCP clients pass `history` to the `ask` tool.
+  browser tab (a **New chat** button clears them; a refresh does too). the MCP tools take no history: an MCP client keeps its own conversation.
 - **What the rewriter sees.** The last 3 turns, each as the question, the answer (cut to 300 characters) and the first 5 result
   rows (cells cut to 60 characters). The rows carry ids and emails, which is how a reference resolves to one person when names repeat.
   The SQL and older turns are not sent, and nothing is summarized by a model.

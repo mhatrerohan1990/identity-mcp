@@ -30,7 +30,7 @@ def scripted(sqls, calls):
 def test_invalid_query_is_repaired_then_executed(env, monkeypatch):
     calls, executed = [], []
     real_execute = pipeline.execute
-    monkeypatch.setattr(pipeline, "execute", lambda sql: (executed.append(sql), real_execute(sql))[1])
+    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: (executed.append(sql), real_execute(sql, *a))[1])
     monkeypatch.setattr(llm, "chat", scripted([BAD, GOOD], calls))
     out = run(pipeline.ask("apps per integration", k=0))
 

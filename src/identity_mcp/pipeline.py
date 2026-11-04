@@ -18,9 +18,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import conversation, grounding, llm, retrieval
+from . import bank, conversation, grounding, handoff, llm, retrieval
 from .db import SCHEMA_SQL
 from .logs import configure, flow, new_request_id, one_line
+from .scopes import Scope
 from .validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
 
 TODAY = "2026-11-01"  # matches the seed data
@@ -29,24 +30,51 @@ SUMMARY_ROWS = 50  # rows shown to the LLM when summarizing
 QUERY_TIMEOUT_S = 5.0
 DEFAULT_MAX_REPAIRS = 2  # extra model attempts after a query fails validation
 
-SQL_SYSTEM_BASE = f"""You translate questions about an identity and access governance database into one SQLite query.
-
-Database schema:
-{SCHEMA_SQL}
-Rules:
-- Write a single read-only SELECT statement in SQLite dialect. Use only the tables and columns above.
+_HEAD = "You translate questions about an identity and access governance database into one SQLite query.\n"
+_COMMON_RULES = f"""- Write a single read-only SELECT statement in SQLite dialect. Use only the tables and columns above.
 - Boolean columns hold 0 or 1. Dates are ISO-8601 text, so compare them as strings or with date().
 - Treat today as {TODAY}. Use date('{TODAY}', '-90 days') for relative dates, never date('now').
-- "Admin" access means entitlements.is_admin = 1. Access a user holds is in access_grants.
 - Select human-readable columns (names, emails) rather than only ids.
 - Add only the filters the question asks for. Do not invent conditions on status, dates, entitlements or grant type.
 - "How many ..." questions return one number (COUNT), not a list of rows.
-- Roles, jobs, positions and titles of people are users.title; entitlements are permissions inside applications.
 - Questions about people return one row per person (GROUP BY u.id or SELECT DISTINCT), never one row per grant,
   membership or event. Put per-person counts in columns. Questions about applications return one row per application.
 - "Each" and "every" list all of them; use LIMIT only for "top N", "most" or "largest" questions.
 - Match a person named in the question with name LIKE '%Name%' (names are not unique), and include id and email.
-Respond with JSON: {{"sql": "<the query>"}}"""
+"""
+_IDENTITY_RULES = """- "Admin" access means entitlements.is_admin = 1. Access a user holds is in access_grants.
+- Roles, jobs, positions and titles of people are users.title; entitlements are permissions inside applications.
+"""
+_ACTIVITY_RULES = """- Activity is in activity_events: event_type is login, read, write or admin_action; success = 0 means it failed.
+  A user's last activity is MAX(ts). Users with no events at all have no rows there, so use LEFT JOIN or NOT EXISTS.
+"""
+_SCOPED_RULES = """- Always return the id of each person or application as the first column, named id, even when you also return names:
+  another tool may use these ids as its input.
+"""
+_RESPOND = 'Respond with JSON: {"sql": "<the query>"}'
+
+
+def system_base(scope: Scope | None = None, inputs: handoff.Input | None = None) -> str:
+    """The system prompt without examples: role, schema, rules and the response format.
+
+    Args:
+        scope: Limit the schema (and the scope-specific rules) to one tool's tables; None shows the whole database.
+        inputs: Values handed over from an earlier step; adds a rule describing the ``input`` table.
+    """
+    schema = scope.schema_sql() if scope else SCHEMA_SQL
+    rules = _COMMON_RULES
+    if scope is None or scope.name == "identity":
+        rules += _IDENTITY_RULES
+    if scope is None or scope.name == "activity":
+        rules += _ACTIVITY_RULES
+    if scope is not None:
+        rules += _SCOPED_RULES
+    if inputs is not None:
+        rules += "- " + handoff.describe(inputs) + "\n"
+    return f"{_HEAD}\nDatabase schema:\n{schema}\nRules:\n{rules}{_RESPOND}"
+
+
+SQL_SYSTEM_BASE = system_base()  # the whole database, no hand-over: what an unscoped question uses
 
 EXAMPLES_INTRO = """
 
@@ -79,7 +107,7 @@ def _strip_fences(sql: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
-def build_sql_system(hits: list[retrieval.Hit]) -> str:
+def build_sql_system(hits: list[retrieval.Hit], scope: Scope | None = None, inputs: handoff.Input | None = None) -> str:
     """Assemble the system prompt for SQL generation.
 
     The rules and schema always come first. If retrieval found examples they follow, ordered so the best match is
@@ -87,16 +115,19 @@ def build_sql_system(hits: list[retrieval.Hit]) -> str:
 
     Args:
         hits: Retrieved bank examples, best first. May be empty (no examples).
+        scope: Restrict the schema to one tool's tables (see ``scopes.py``).
+        inputs: Values handed over from an earlier step (see ``handoff.py``).
     """
+    base = system_base(scope, inputs)
     if not hits:
-        return SQL_SYSTEM_BASE
+        return base
     blocks = []
     for h in reversed(hits):  # best match last, nearest the question
         block = f"Question: {h.example.question}\nSQL: {h.example.sql}"
         if h.example.notes:
             block += f"\nNote: {h.example.notes}"
         blocks.append(block)
-    return SQL_SYSTEM_BASE + EXAMPLES_INTRO + "\n\n".join(blocks)
+    return base + EXAMPLES_INTRO + "\n\n".join(blocks)
 
 
 def max_repairs() -> int:
@@ -108,9 +139,11 @@ def max_repairs() -> int:
         return DEFAULT_MAX_REPAIRS
 
 
-def sql_messages(question: str, hits: list[retrieval.Hit]) -> list[dict[str, str]]:
+def sql_messages(
+    question: str, hits: list[retrieval.Hit], scope: Scope | None = None, inputs: handoff.Input | None = None
+) -> list[dict[str, str]]:
     """The chat messages for the first SQL attempt: the system prompt (with examples) and the user's question."""
-    return [{"role": "system", "content": build_sql_system(hits)}, {"role": "user", "content": question}]
+    return [{"role": "system", "content": build_sql_system(hits, scope, inputs)}, {"role": "user", "content": question}]
 
 
 async def _request_sql(messages: list[dict[str, str]]) -> str:
@@ -126,15 +159,26 @@ async def _request_sql(messages: list[dict[str, str]]) -> str:
         raise llm.LLMError(f"LLM did not return the expected JSON: {raw[:200]!r}") from e
 
 
-async def generate_sql(question: str, hits: list[retrieval.Hit] | None = None) -> str:
+async def generate_sql(
+    question: str,
+    hits: list[retrieval.Hit] | None = None,
+    scope: Scope | None = None,
+    inputs: handoff.Input | None = None,
+) -> str:
     """First attempt at turning `question` into SQL, using the retrieved `hits` as worked examples. No checking happens here.
     """
-    return await _request_sql(sql_messages(question, hits or []))
+    return await _request_sql(sql_messages(question, hits or [], scope, inputs))
 
 
-async def repair_sql(question: str, hits: list[retrieval.Hit] | None, failed: list[tuple[str, list[str]]]) -> str:
+async def repair_sql(
+    question: str,
+    hits: list[retrieval.Hit] | None,
+    failed: list[tuple[str, list[str]]],
+    scope: Scope | None = None,
+    inputs: handoff.Input | None = None,
+) -> str:
     """Ask again with the conversation so far: each failed query as the model's own reply, then why it failed."""
-    messages = sql_messages(question, hits or [])
+    messages = sql_messages(question, hits or [], scope, inputs)
     for sql, errors in failed:
         problems = "\n".join(f"- {e}" for e in errors)
         messages += [
@@ -161,15 +205,18 @@ def _explain_failure(e: sqlite3.Error) -> str:
     return f"{type(e).__name__}: {text}"
 
 
-def execute(sql: str) -> dict[str, Any]:
+def execute(sql: str, scope: Scope | None = None, inputs: handoff.Input | None = None) -> dict[str, Any]:
     """Run `sql` on the sandboxed read-only connection with a time limit and row cap.
 
-    Refuses anything that fails the static checks, so no caller can run unvalidated SQL by accident.
+    Refuses anything that fails the static checks, so no caller can run unvalidated SQL by accident. With a `scope`
+    the query may read only that scope's tables (checked statically and again by SQLite's authorizer); with `inputs`
+    the values are exposed to the query as the ``input`` table (see ``handoff.py``).
     """
-    errors = validate_static(sql)
+    sql = handoff.with_input(sql, inputs)
+    errors = validate_static(sql, scope)
     if errors:
         raise ValidationError(errors)
-    con = connect_query()
+    con = connect_query(scope)
     deadline = time.monotonic() + QUERY_TIMEOUT_S
     con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10_000)
     try:
@@ -204,9 +251,16 @@ async def summarize(question: str, sql: str, result: dict[str, Any]) -> str:
     return (await llm.chat([{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": user}])).strip()
 
 
-def check_sql(sql: str) -> Validation:
-    """Every pre-execution check, in order: well-formed and safe (validation), then filters on real values (grounding)."""
-    result = validate(sql)
+def check_sql(sql: str, scope: Scope | None = None, inputs: handoff.Input | None = None) -> Validation:
+    """Every pre-execution check, in order: well-formed and safe (validation), then filters on real values (grounding).
+
+    The query is checked exactly as it will run, including the ``input`` table definition when `inputs` are given.
+    """
+    missing = handoff.unused_input(sql, inputs)
+    if missing:
+        return Validation(False, "input", missing)
+    sql = handoff.with_input(sql, inputs)
+    result = validate(sql, scope=scope)
     if result.ok:
         problems = grounding.check(sql)
         if problems:
@@ -227,10 +281,15 @@ class Draft:
     repair_ms: int
 
 
-async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
+async def produce_sql(
+    question: str,
+    hits: list[retrieval.Hit],
+    scope: Scope | None = None,
+    inputs: handoff.Input | None = None,
+) -> Draft:
     """Generate SQL, validate it, and send failures back to the model for up to `max_repairs()` retries."""
     t = time.monotonic()
-    sql = await generate_sql(question, hits)
+    sql = await generate_sql(question, hits, scope, inputs)
     generate_ms = round((time.monotonic() - t) * 1000)
     flow.info("generated sql in %d ms: %s", generate_ms, one_line(sql, 600))
 
@@ -240,7 +299,7 @@ async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
     validate_ms = repair_ms = repairs = 0
     while True:
         tv = time.monotonic()
-        check = await asyncio.to_thread(check_sql, sql)
+        check = await asyncio.to_thread(check_sql, sql, scope, inputs)
         validate_ms += round((time.monotonic() - tv) * 1000)
         attempts.append({"sql": sql, "ok": check.ok, "stage": check.stage, "errors": check.errors})
         if check.ok:
@@ -254,7 +313,7 @@ async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
             break
         tr = time.monotonic()
         flow.info("repair %d/%d: asking the model to fix its query", len(failed), limit)
-        new_sql = await repair_sql(question, hits, failed)
+        new_sql = await repair_sql(question, hits, failed, scope, inputs)
         repairs += 1
         repair_ms += round((time.monotonic() - tr) * 1000)
         flow.info("repair %d/%d produced: %s", len(failed), limit, one_line(new_sql, 600))
@@ -265,10 +324,20 @@ async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
     return Draft(sql, check, attempts, repairs, generate_ms, validate_ms, repair_ms)
 
 
+def _outside_scope(scope: Scope | None) -> frozenset[str]:
+    """Bank ids whose query reads a table outside `scope`; such examples are hidden from retrieval for that scope."""
+    if scope is None:
+        return frozenset()
+    return frozenset(e.id for e in bank.load() if not scope.allows(e.sql))
+
+
 async def ask(
     question: str,
     *,
     history: list[conversation.Turn] | None = None,
+    scope: Scope | None = None,
+    inputs: handoff.Input | None = None,
+    summarize_answer: bool = True,
     k: int | None = None,
     exclude: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
@@ -279,6 +348,12 @@ async def ask(
     returned as `standalone_question`, is what the rest of the pipeline runs on. `question` in the result is always
     what the user typed.
 
+    `scope` restricts the question to one tool's tables (``scopes.py``): the prompt shows only those tables, only bank
+    examples that read only those tables are retrieved, and the query is rejected if it touches anything else. `inputs`
+    are ids handed over from an earlier tool call, exposed to the query as the ``input`` table (``handoff.py``).
+    With `summarize_answer` False no plain-English answer is written (`answer` stays empty): a calling agent that
+    reasons over the rows itself does not need one, and the step is the slowest model call.
+
     `k` overrides how many bank examples are retrieved (0 disables retrieval); `exclude` hides bank ids
     (used by evals to hold questions out).
     """
@@ -286,6 +361,10 @@ async def ask(
     started = time.monotonic()
     flow.info("ask start id=%s k=%s excluded=%s question=%r", rid, "default" if k is None else k, sorted(exclude), question)
     out: dict[str, Any] = {"question": question, "answer": "", "sql": None, "examples": []}
+    if scope is not None:
+        out["scope"] = scope.name
+    if inputs is not None:
+        out["input_count"] = inputs.count
     timings: dict[str, int] = {}
     out["timings_ms"] = timings
     try:
@@ -302,7 +381,7 @@ async def ask(
         t = time.monotonic()
         hits: list[retrieval.Hit] = []
         try:
-            hits = await retrieval.retrieve(question, k=k, exclude=exclude)
+            hits = await retrieval.retrieve(question, k=k, exclude=exclude | _outside_scope(scope))
         except (llm.LLMError, FileNotFoundError) as e:  # degrade to no examples, but say so
             out["warning"] = (out["warning"] + " " if "warning" in out else "") + f"Answered without example retrieval: {e}"
             flow.warning("retrieval failed, continuing without examples: %s", e)
@@ -313,7 +392,7 @@ async def ask(
             len(hits), timings["retrieve"], "; ".join(f"{h.example.id} {h.score:.3f} {h.example.question!r}" for h in hits) or "none",
         )
 
-        draft = await produce_sql(question, hits)
+        draft = await produce_sql(question, hits, scope, inputs)
         sql, check, attempts = draft.sql, draft.check, draft.attempts
         timings["generate_sql"] = draft.generate_ms
         out["sql"] = sql
@@ -333,7 +412,7 @@ async def ask(
             out["answer"] = intro + "\n" + "\n".join(f"- {e}" for e in check.errors)
         else:
             t = time.monotonic()
-            result = await asyncio.to_thread(execute, out["sql"])
+            result = await asyncio.to_thread(execute, out["sql"], scope, inputs)
             timings["execute"] = round((time.monotonic() - t) * 1000)
             out.update(result)
             flow.info(
@@ -341,10 +420,11 @@ async def ask(
                 timings["execute"], result["row_count"], " (truncated)" if result["truncated"] else "",
                 result["columns"], one_line(result["rows"][0], 200) if result["rows"] else "-",
             )
-            t = time.monotonic()
-            out["answer"] = await summarize(question, out["sql"], result)
-            timings["summarize"] = round((time.monotonic() - t) * 1000)
-            flow.info("summarized in %d ms: %s", timings["summarize"], one_line(out["answer"], 300))
+            if summarize_answer:
+                t = time.monotonic()
+                out["answer"] = await summarize(question, out["sql"], result)
+                timings["summarize"] = round((time.monotonic() - t) * 1000)
+                flow.info("summarized in %d ms: %s", timings["summarize"], one_line(out["answer"], 300))
     except llm.LLMError as e:
         out["error"] = str(e)
         out["answer"] = f"I couldn't reach the language model: {e}"

@@ -148,7 +148,7 @@ GOOD = "SELECT name FROM users WHERE department = 'Engineering' AND status = 'ac
 def test_wrong_value_is_repaired_through_the_loop(env, monkeypatch):
     calls, executed = [], []
     real = pipeline.execute
-    monkeypatch.setattr(pipeline, "execute", lambda sql: (executed.append(sql), real(sql))[1])
+    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: (executed.append(sql), real(sql, *a))[1])
     monkeypatch.setattr(llm, "chat", scripted([BAD, GOOD], calls))
     out = run(pipeline.ask("active engineers", k=0))
     assert out["sql"] == GOOD and out["repairs"] == 1 and executed == [GOOD] and out["rows"]
@@ -159,7 +159,7 @@ def test_wrong_value_is_repaired_through_the_loop(env, monkeypatch):
 
 def test_value_that_does_not_exist_is_reported_not_run_or_swapped(env, monkeypatch):
     calls, executed = [], []
-    monkeypatch.setattr(pipeline, "execute", lambda sql: executed.append(sql))
+    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: executed.append(sql))
     sql = "SELECT name FROM users WHERE department = 'Mars'"
     monkeypatch.setattr(llm, "chat", scripted([sql], calls))  # the model insists
     out = run(pipeline.ask("who works in Mars?", k=0))

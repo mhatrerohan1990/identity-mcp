@@ -76,18 +76,21 @@ def test_llm_down_is_reported(db, monkeypatch):
     assert "Cannot reach" in out["error"]
 
 
-def test_mcp_tool_in_memory(db, monkeypatch):
-    monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM groups", "12 groups."))
+def test_mcp_exposes_the_two_scoped_tools(db, monkeypatch):
+    monkeypatch.setattr(llm, "chat", fake_llm("SELECT COUNT(*) FROM groups"))
 
     async def go():
         async with Client(mcp_server.mcp) as client:
-            tools = (await client.list_tools()).tools
-            assert [t.name for t in tools] == ["ask"]
-            result = await client.call_tool("ask", {"question": "how many groups?"})
-            return result.structured_content
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            result = await client.call_tool("query_identity", {"question": "how many groups?"})
+            return tools, result.structured_content
 
-    out = run(go())
-    assert out["answer"] == "12 groups." and out["rows"] == [[12]]
+    tools, out = run(go())
+    assert list(tools) == ["query_identity", "query_activity"]
+    for tool in tools.values():
+        assert "filter_from" in tool.input_schema["properties"] and tool.input_schema["required"] == ["question"]
+    assert "query_activity" in tools["query_identity"].description and "query_identity" in tools["query_activity"].description
+    assert out["scope"] == "identity" and out["rows"] == [[12]] and out["result_id"].startswith("r_") and "answer" not in out
 
 
 def test_mcp_mounted_in_fastapi(db):

@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import sqlglot
 from sqlglot import exp
@@ -23,6 +24,9 @@ from sqlglot.optimizer.qualify import qualify
 
 from .db import SCHEMA_SQL, connect_ro
 from .logs import flow
+
+if TYPE_CHECKING:  # scopes.py imports this module (for SCHEMA), so the import is only for type hints
+    from .scopes import Scope
 
 MAX_SQL_CHARS = 4000
 MAX_VALUE_BYTES = 1_000_000  # engine limit on any string/blob a query builds (stops randomblob(1e9) and friends)
@@ -101,12 +105,19 @@ def _authorizer(forbidden: frozenset[str]):
     return authorize
 
 
-def connect_query() -> sqlite3.Connection:
-    """Read-only connection for running model-written SQL: authorizer plus a limit on value sizes."""
+def connect_query(scope: Scope | None = None) -> sqlite3.Connection:
+    """Read-only connection for running model-written SQL: authorizer plus a limit on value sizes.
+
+    With a `scope`, the tables outside it are added to the authorizer's forbidden set, so SQLite itself refuses to read
+    them whatever the static checks concluded.
+    """
     con = connect_ro()
     con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)
     real = {r[0].lower() for r in con.execute("SELECT name FROM sqlite_master")}
-    con.set_authorizer(_authorizer(frozenset(real - _TABLES)))
+    forbidden = real - _TABLES
+    if scope is not None:
+        forbidden |= _TABLES - {t.lower() for t in scope.tables}
+    con.set_authorizer(_authorizer(frozenset(forbidden)))
     return con
 
 
@@ -156,8 +167,11 @@ def _join_problems(tree: exp.Expression) -> list[str]:
     return problems
 
 
-def validate_static(sql: str) -> list[str]:
-    """Problems found by inspecting `sql` without running it. Empty list means it passed."""
+def validate_static(sql: str, scope: Scope | None = None) -> list[str]:
+    """Problems found by inspecting `sql` without running it. Empty list means it passed.
+
+    With a `scope`, a query that names a table outside it is rejected, with the tables the scope does cover.
+    """
     if len(sql) > MAX_SQL_CHARS:
         return [f"The query is too long ({len(sql)} characters, maximum {MAX_SQL_CHARS}). Write a simpler query."]
     try:
@@ -199,6 +213,11 @@ def validate_static(sql: str) -> list[str]:
             errors.append(f"Schema-qualified table {table.db}.{table.name} is not allowed.")
         elif table.name.lower() not in _TABLES | ctes:
             errors.append(f"Unknown table {table.name!r}. Available tables: {', '.join(sorted(SCHEMA))}.")
+        elif scope is not None and table.name.lower() not in {t.lower() for t in scope.tables} | ctes:
+            errors.append(
+                f"Table {table.name!r} is not available in the {scope.name} tool. "
+                f"This tool covers: {', '.join(sorted(scope.tables))}."
+            )
     if errors:
         return errors
     errors = _join_problems(tree)
@@ -267,10 +286,10 @@ def _column_error(tree: exp.Expression, sql: str, raw: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------ dry run + all
-def validate_dry_run(sql: str, con: sqlite3.Connection | None = None) -> list[str]:
-    """Ask SQLite to compile the query (EXPLAIN) on the sandboxed connection, without running it."""
+def validate_dry_run(sql: str, con: sqlite3.Connection | None = None, scope: Scope | None = None) -> list[str]:
+    """Ask SQLite to compile the query (EXPLAIN) on the sandboxed connection (limited to `scope`), without running it."""
     own = con is None
-    con = con or connect_query()
+    con = con or connect_query(scope)
     try:
         con.execute(f"EXPLAIN {normalize(sql)}").fetchall()
         return []
@@ -281,16 +300,19 @@ def validate_dry_run(sql: str, con: sqlite3.Connection | None = None) -> list[st
             con.close()
 
 
-def validate(sql: str, con: sqlite3.Connection | None = None) -> Validation:
-    """Static checks first; the dry run only happens if they pass. Fails closed if the checker itself errors."""
+def validate(sql: str, con: sqlite3.Connection | None = None, scope: Scope | None = None) -> Validation:
+    """Static checks first; the dry run only happens if they pass. Fails closed if the checker itself errors.
+
+    `scope` limits the query to one tool's tables (see ``scopes.py``); without it every table is allowed.
+    """
     try:
-        errors = validate_static(sql)
+        errors = validate_static(sql, scope)
     except Exception as e:  # a crash in analysis must reject the query, never let it through or take the request down
         flow.exception("static validation crashed on %r", sql[:200])
         return Validation(False, "static", [f"The query could not be analyzed ({type(e).__name__}). Write a simpler query."])
     if errors:
         return Validation(False, "static", errors)
-    errors = validate_dry_run(sql, con)
+    errors = validate_dry_run(sql, con, scope)
     if errors:
         return Validation(False, "dry_run", errors)
     return Validation(True)

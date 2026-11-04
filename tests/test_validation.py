@@ -108,7 +108,7 @@ def test_invalid_sql_is_not_executed_and_user_gets_reasons(env, monkeypatch, cap
         return '{"sql": "SELECT i.integration FROM entitlements i"}'
 
     monkeypatch.setattr(llm, "chat", chat)
-    monkeypatch.setattr(pipeline, "execute", lambda sql: executed.append(sql))
+    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: executed.append(sql))
     monkeypatch.setenv("IDENTITY_MCP_MAX_REPAIRS", "0")  # this test is about the no-retry path
     caplog.set_level(logging.INFO, logger="identity_mcp")
     out = run(pipeline.ask("apps per integration", k=0))

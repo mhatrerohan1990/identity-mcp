@@ -142,7 +142,7 @@ def test_deep_nesting_is_rejected_not_a_crash():
 
 
 def test_a_crash_inside_the_checker_fails_closed(monkeypatch):
-    def boom(sql):
+    def boom(sql, scope=None):
         raise KeyError("unexpected")
 
     monkeypatch.setattr(validation, "validate_static", boom)

@@ -5,10 +5,9 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from mcp import Client
 from pydantic import ValidationError
 
-from identity_mcp import conversation, llm, mcp_server, pipeline
+from identity_mcp import conversation, llm, pipeline
 from identity_mcp.api.app import app
 from identity_mcp.conversation import Turn
 from identity_mcp.data import seed
@@ -140,7 +139,7 @@ def test_unchanged_follow_up_is_not_reported_as_rewritten(env, monkeypatch):
     assert "standalone_question" not in out
 
 
-# --- the two entry points --------------------------------------------------------------------------------
+# --- the HTTP entry point (MCP clients keep their own conversation; see agent.py) ------------------------
 
 def test_api_accepts_history_and_limits_it(env, monkeypatch):
     seen = {}
@@ -157,23 +156,3 @@ def test_api_accepts_history_and_limits_it(env, monkeypatch):
     assert client.post("/api/ask", json={"question": "x"}).status_code == 200 and seen["history"] == []
     too_long = {"question": "x", "history": [COHENS.model_dump()] * 7}
     assert client.post("/api/ask", json=too_long).status_code == 422
-
-
-def test_mcp_tool_takes_history(env, monkeypatch):
-    seen = []
-
-    async def fake_ask(question, *, history=None, **kw):
-        seen.append(history)
-        return {"answer": "ok"}
-
-    monkeypatch.setattr(pipeline, "ask", fake_ask)
-
-    async def go():
-        async with Client(mcp_server.mcp) as client:
-            (tool,) = (await client.list_tools()).tools
-            assert "history" in tool.input_schema["properties"] and tool.input_schema["required"] == ["question"]
-            await client.call_tool("ask", {"question": "the newer one", "history": [COHENS.model_dump()]})
-            await client.call_tool("ask", {"question": "first"})
-
-    run(go())
-    assert seen == [[COHENS], None]  # the first call carried the turn; the second had no history
