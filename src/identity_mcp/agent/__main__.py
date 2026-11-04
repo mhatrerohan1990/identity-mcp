@@ -29,6 +29,9 @@ def make_printer(started: float):
 
     def show(node: str, update: dict[str, Any]) -> None:
         stamp = f"[{time.monotonic() - started:5.1f}s]"
+        if node == "verify":  # no messages when the answer passes, so it is reported before the message loop
+            issues = update.get("issues", [])
+            print(f"{stamp} answer checked against the results: {'ok' if not issues else '; '.join(issues)}", file=sys.stderr)
         for message in update.get("messages", []):
             if isinstance(message, AIMessage) and message.tool_calls:
                 for call in message.tool_calls:
@@ -37,6 +40,8 @@ def make_printer(started: float):
                 print(f"{stamp} model is answering", file=sys.stderr)
             elif isinstance(message, ToolMessage):
                 print(f"{stamp} <- {describe_result(message)}", file=sys.stderr)
+            elif node == "revise":
+                print(f"{stamp} (answer did not match the data: sent back to the model once)", file=sys.stderr)
             elif node == "nudge":
                 print(f"{stamp} (plain text is not an answer: told the model to call a tool or final_answer)", file=sys.stderr)
 

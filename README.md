@@ -195,6 +195,19 @@ model as earlier messages, so "what groups is she in?" after "Who is Elena Johns
 text is passed on, not old rows, so a follow-up always fetches fresh data. `agent/trace.py` makes the events, `agent/session.py` runs the
 graph and never raises (a failure becomes an `error` event).
 
+### Answer verification
+
+The SQL is validated, but the sentence the model writes about the rows was not. `agent/verify.py` now checks it in plain code (no extra
+model call) after `final_answer`, with three tests: every **number** must be in the results (a row count, a cell, a distinct count) or in
+a question asked; every bullet that looks like a **name** must match a result cell; and a list that names most of the last result's rows
+but not all is reported as having **left some out**. A failing answer goes back to the model once with the problems spelled out
+(`revise`); if the second answer is still wrong it is sent with a visible note instead of passing as checked. The chat page shows
+"checked against the results" or "not fully verified", and the `answer` event carries `verified` and `issues`.
+
+What it cannot see: a result that is itself ambiguous. "What groups is Elena Johnson in?" matches three different people named Elena
+Johnson, and the answer merges their groups; every word of it is in the data, so it passes. Showing the email or id next to repeated names
+is a separate fix.
+
 Not done: agent eval cases, and saved chats.
 
 ## Validation

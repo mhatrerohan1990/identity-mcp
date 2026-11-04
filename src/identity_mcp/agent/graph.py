@@ -14,6 +14,9 @@
   announce the next step in plain text ("Now let's check their activity") and a loop that treated that as the answer would
   stop half way;
 * ``nudge`` answers plain text, or an answer given before any data was fetched, by telling the model what to do;
+* ``verify`` checks the finished answer against the tool results (``verify.py``). A wrong number, an invented name or a
+  list that lost rows sends the model back once through ``revise`` with the problems spelled out; if the second answer is
+  still wrong it goes out with a visible caveat instead of passing as verified;
 * ``give_up`` ends the run with an honest message when the step budget is spent, instead of looping.
 
 The state is the list of messages plus two small counters, so every step is inspectable and the run is easy to test with a
@@ -33,9 +36,11 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from . import prompts
+from .verify import asked_in, results_of, verify_answer
 from .recovery import recover_tool_calls
 
 DEFAULT_MAX_STEPS = 6  # model calls per question; a two-tool chain needs 3 (two tool calls, then final_answer)
+MAX_REVISIONS = 1  # times a wrong answer is sent back to the model; after that it is sent out with a caveat
 MAX_NUDGES = 2  # times the model is told to use a tool instead of writing text; after that its text is accepted as the answer
 FINAL = "final_answer"  # the tool the model calls to finish; handled by the graph, not by the MCP server
 
@@ -47,11 +52,15 @@ class AgentState(TypedDict):
         messages: The conversation so far: the question, each model reply, each tool result.
         steps: How many times the model has been called.
         nudges: How many times the model has been told to call a tool instead of writing text.
+        revisions: How many times an answer that failed verification was sent back to the model.
+        issues: The problems the last verification found (empty when the answer held up).
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
     steps: int
     nudges: int
+    revisions: int
+    issues: list[str]
 
 
 def final_answer_tool() -> StructuredTool:
@@ -97,6 +106,18 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool], max_steps: int 
         call = next(c for c in state["messages"][-1].tool_calls if c["name"] == FINAL)
         return {"messages": [AIMessage(str(call["args"].get("answer", "")))]}
 
+    async def verify(state: AgentState) -> dict[str, Any]:
+        answer = state["messages"][-1].content
+        issues = verify_answer(str(answer), results_of(state["messages"]), asked_in(state["messages"]))
+        if issues and state["revisions"] >= MAX_REVISIONS:  # out of chances: say so rather than pass it off as checked
+            note = prompts.CAVEAT.format(problems=" ".join(issues))
+            return {"issues": issues, "messages": [AIMessage(f"{answer}{note}")]}
+        return {"issues": issues}
+
+    async def revise(state: AgentState) -> dict[str, Any]:
+        problems = "\n".join(f"- {issue}" for issue in state["issues"])
+        return {"messages": [HumanMessage(prompts.REVISE.format(problems=problems))], "revisions": state["revisions"] + 1}
+
     async def give_up(state: AgentState) -> dict[str, Any]:
         calls = [f"{c['name']}" for m in state["messages"] if isinstance(m, AIMessage) for c in m.tool_calls]
         done = ", ".join(calls) if calls else "no tool calls"
@@ -120,6 +141,8 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool], max_steps: int 
     graph.add_node("tools", ToolNode(list(tools), handle_tool_errors=True))
     graph.add_node("nudge", nudge)
     graph.add_node("finish", finish)
+    graph.add_node("verify", verify)
+    graph.add_node("revise", revise)
     graph.add_node("give_up", give_up)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges(
@@ -127,7 +150,12 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool], max_steps: int 
     )
     graph.add_edge("tools", "agent")
     graph.add_edge("nudge", "agent")
-    graph.add_edge("finish", END)
+    graph.add_edge("finish", "verify")
+    graph.add_conditional_edges(
+        "verify", lambda state: "revise" if state["issues"] and state["revisions"] < MAX_REVISIONS else END,
+        {"revise": "revise", END: END},
+    )
+    graph.add_edge("revise", "agent")
     graph.add_edge("give_up", END)
     return graph.compile()
 
@@ -144,7 +172,7 @@ def initial_state(question: str, history: Sequence[tuple[str, str]] = ()) -> Age
     earlier: list[AnyMessage] = []
     for asked, answered in history:
         earlier += [HumanMessage(asked), AIMessage(answered)]
-    return {"messages": [*earlier, HumanMessage(question)], "steps": 0, "nudges": 0}
+    return {"messages": [*earlier, HumanMessage(question)], "steps": 0, "nudges": 0, "revisions": 0, "issues": []}
 
 
 def answer_of(update: dict[str, Any]) -> str | None:

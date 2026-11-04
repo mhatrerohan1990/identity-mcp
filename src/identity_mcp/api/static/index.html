@@ -146,6 +146,8 @@ function addStep(m, ev) {
     line.append(el("b", null, `\u2192 ${SCOPE[ev.name] || ev.name}: `), document.createTextNode(ev.question + link));
     m.steps.append(line);
   } else if (ev.type === "tool_result") stepTable(m, ev);
+  else if (ev.type === "revise") m.steps.append(el("div", "step bad", "The answer did not match the data; the model was asked to fix it."));
+  else if (ev.type === "verification") m.steps.append(el("div", ev.ok ? "step" : "step bad", ev.ok ? "\u2713 Answer checked against the results" : `Check found: ${ev.issues.join(" ")}`));
   else if (ev.type === "nudge") m.steps.append(el("div", "step", "(the model wrote text instead of calling a tool; asked to try again)"));
 }
 
@@ -176,7 +178,7 @@ async function askAgent(question) {
   m.insertBefore(el("div", "bubble", answer.text), box);  // the answer first, the steps it took folded below it
   const d = el("details"); d.append(el("summary", null, `Steps (${m.steps.querySelectorAll(".step").length})`));
   box.replaceWith(d); d.append(m.steps);
-  m.append(el("div", "meta", `${(answer.elapsed_ms / 1000).toFixed(1)}s \u00b7 ${answer.steps} model call${answer.steps === 1 ? "" : "s"}`));
+  m.append(el("div", "meta", `${(answer.elapsed_ms / 1000).toFixed(1)}s \u00b7 ${answer.steps} model call${answer.steps === 1 ? "" : "s"}` + (answer.verified === true ? " \u00b7 \u2713 checked against the results" : answer.verified === false ? " \u00b7 \u26a0 not fully verified" : "")));
   history.push({ question, answer: answer.text });
 }
 

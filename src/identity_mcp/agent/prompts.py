@@ -39,3 +39,10 @@ GIVE_UP = (
     "I ran out of steps ({steps}) before finishing, so I can't give a complete answer. "
     "What I did: {done}."
 )
+
+REVISE = (
+    "Your answer was checked against the tool results and has problems:\n{problems}\n"
+    "Fix them and call final_answer again. Use only what is in the results; do not call a tool again unless you need more data."
+)
+
+CAVEAT = "\n\n(Note: this answer could not be fully checked against the data: {problems})"

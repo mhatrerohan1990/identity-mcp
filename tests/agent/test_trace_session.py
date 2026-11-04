@@ -66,8 +66,8 @@ def patch_tools(monkeypatch, log=None):
 def test_session_streams_steps_then_the_answer(monkeypatch):
     patch_tools(monkeypatch)
     events, _ = collect(replies=[call("query_identity", question="admins"), final("Three admins.")])
-    assert [e["type"] for e in events] == ["tool_call", "tool_result", "answer"]
-    assert events[-1]["text"] == "Three admins." and events[-1]["steps"] == 2
+    assert [e["type"] for e in events] == ["tool_call", "tool_result", "verification", "answer"]
+    assert events[-1]["text"] == "Three admins." and events[-1]["steps"] == 2 and events[-1]["verified"] is True
     assert events[1]["row_count"] == 3
 
 

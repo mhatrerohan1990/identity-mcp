@@ -9,6 +9,8 @@ Event types (each a dict with a ``type`` key):
 * ``tool_result`` - the tool answered: ``name``, ``scope``, ``row_count``, ``columns``, ``rows`` (first 25), ``truncated``,
   ``sql``, ``result_id``, and ``error`` (None when it worked)
 * ``nudge``       - the model wrote plain text instead of calling a tool and was told to try again
+* ``verification`` - the answer was checked against the results: ``ok`` and ``issues`` (plain sentences)
+* ``revise``      - the check failed and the model was sent back to fix its answer once
 """
 
 from __future__ import annotations
@@ -62,6 +64,8 @@ def result_event(message: ToolMessage) -> dict[str, Any]:
 def events_for(node: str, update: dict[str, Any]) -> list[dict[str, Any]]:
     """The events one graph node's `update` produced, in order (often none: the model's own text is not an event)."""
     events: list[dict[str, Any]] = []
+    if node == "verify":
+        return [{"type": "verification", "ok": not update.get("issues"), "issues": update.get("issues", [])}]
     for message in update.get("messages", []):
         if isinstance(message, AIMessage):
             for call in message.tool_calls:
@@ -73,6 +77,6 @@ def events_for(node: str, update: dict[str, Any]) -> list[dict[str, Any]]:
                                "filter_from": link if isinstance(link, dict) and link.get("result_id") else None})
         elif isinstance(message, ToolMessage):
             events.append(result_event(message))
-        elif node == "nudge":
-            events.append({"type": "nudge"})
+        elif node in ("nudge", "revise"):
+            events.append({"type": node})
     return events

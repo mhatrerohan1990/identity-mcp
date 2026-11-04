@@ -83,7 +83,7 @@ def test_two_tools_chained_then_an_answer():
     assert answer == "Three admins are dormant."
     assert [name for name, _ in log] == ["query_identity", "query_activity"]
     assert log[1][1]["filter_from"] == {"result_id": "r_query_identity", "column": "id"}  # the first result's id reached the second call
-    assert updates == ["agent", "tools", "agent", "tools", "agent", "finish"]
+    assert updates == ["agent", "tools", "agent", "tools", "agent", "finish", "verify"]
     assert [type(m).__name__ for m in model.seen[-1]].count("ToolMessage") == 2  # the model saw both results before finishing
 
 

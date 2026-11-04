@@ -6,7 +6,8 @@ printer but shares the model choice from here.
 
 Final event types, in addition to those in ``trace``:
 
-* ``answer`` - ``text``, ``steps`` (model calls used), ``elapsed_ms``
+* ``answer`` - ``text``, ``steps`` (model calls used), ``elapsed_ms``, ``verified`` (True: passed the check against
+  the data; False: it did not; None: it was not checked, as when the step budget ran out) and ``issues`` (what was still wrong if not; the text then ends with a caveat)
 * ``error``  - ``message``: the run could not complete (the model server or the MCP server was unreachable, for example)
 """
 
@@ -58,7 +59,7 @@ async def events(
         max_steps: Most model calls per question.
     """
     started = time.monotonic()
-    final, steps = "", 0
+    final, steps, issues, checked = "", 0, [], False
     try:
         async with open_tools(tools_target) as tools:
             graph = agent_graph.build_graph(model or make_model(), tools, max_steps)
@@ -66,10 +67,12 @@ async def events(
                 for event in events_for(node, update):
                     yield {**event, "elapsed_ms": int((time.monotonic() - started) * 1000)}
                 final = agent_graph.answer_of(update) or final
+                if node == "verify":
+                    issues, checked = update.get("issues", []), True
                 if node == "agent":
                     steps += 1
     except Exception as e:  # noqa: BLE001 - a stream that raises half way cannot report the failure to the browser
         log.exception("agent run failed")
         yield {"type": "error", "message": f"The agent could not finish: {e}"}
         return
-    yield {"type": "answer", "text": final, "steps": steps, "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    yield {"type": "answer", "text": final, "steps": steps, "verified": (not issues) if checked else None, "issues": issues, "elapsed_ms": int((time.monotonic() - started) * 1000)}
