@@ -30,6 +30,24 @@ def test_text_form_calls_become_real_calls(text):
     assert reply.tool_calls[0]["id"] and reply.tool_calls[0]["type"] == "tool_call"
 
 
+@pytest.mark.parametrize("text", [
+    "I apologize for the confusion. Let's proceed by calling the tool:\n\n```json\n" + json.dumps(CALL) + "\n```",
+    "Calling it now.\n<tool_call>\n" + json.dumps(CALL) + "\n</tool_call>\nOne moment.",
+    "```json\n" + json.dumps(CALL) + "\n```\n(the model wrote text instead of calling a tool)",
+])
+def test_a_call_in_a_fence_or_tags_is_recovered_even_with_prose_around_it(text):
+    reply = recovered(text)
+    assert reply.content == "" and [(c["name"], c["args"]) for c in reply.tool_calls] == [("query_identity", {"question": "admins"})]
+
+
+def test_the_pasted_reply_is_recovered():
+    text = ("I apologize for the confusion. Let's proceed by calling the `query_identity` tool to get the details of Arjun Mhatre.\n\n"
+            "```json\n{\n  \"name\": \"query_identity\",\n  \"arguments\": {\n    \"question\": "
+            "\"What is the current status and other details of Arjun Mhatre?\"\n  }\n}\n```")
+    [call] = recovered(text).tool_calls
+    assert call["name"] == "query_identity" and "Arjun Mhatre" in call["args"]["question"]
+
+
 def test_several_calls_in_a_list():
     reply = recovered(json.dumps([CALL, {"name": "query_activity", "arguments": {"question": "logins"}}]))
     assert [c["name"] for c in reply.tool_calls] == ["query_identity", "query_activity"]
@@ -50,7 +68,10 @@ def test_final_answer_is_recognised_too():
     json.dumps({"name": "query_identity", "arguments": ["not", "a", "dict"]}),
     json.dumps({"name": "query_identity", "arguments": "not json"}),
     '{"name": "query_identity", "arguments": {"question": "admins"}',                 # broken JSON
-    'Sure! ' + json.dumps(CALL),                                                      # prose around the JSON
+    'Sure! ' + json.dumps(CALL),                                                      # bare JSON mixed into a sentence
+    "Here is an example call: ```json\n" + json.dumps({"name": "delete_everything", "arguments": {}}) + "\n```",  # fenced, not ours
+    "Use ```json\n" + json.dumps(CALL) + "\n``` and also ```json\n{not json}\n```",   # one fenced block is not a call
+    "The format is ```json\n" + json.dumps({"answer": 42}) + "\n```",              # fenced JSON that is not a call
 ])
 def test_anything_else_is_left_as_the_model_wrote_it(text):
     message = AIMessage(text)

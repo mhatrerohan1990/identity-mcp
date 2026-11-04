@@ -68,6 +68,7 @@ Everything uses 2026-11-01, written into prompts and validation. *Why:* answers 
   right column lives were fixed on the first retry. Grounding lists the real values.
 - **Models fail in different ways.** Qwen writes tool calls as JSON text (recovered in `recovery.py`). Llama fills optional nested
   objects with nulls (pruned) and announces steps instead of doing them (explicit finishing, nudges).
+- **Small models apologise and act in the same message.** "I apologize... ```json {the tool call}```" is a tool call with prose around it; recovery has to look inside code fences, not only at replies that are pure JSON.
 - **Reword nudges carefully.** A nudge that read as "do it again" made the model redo finished work (102 s); one that says "do not
   repeat a tool call that already succeeded" cut it to 49 s.
 - **Examples help less than expected, in a lumpy way.** About 20 of the 93 eval cases change outcome between no examples and four, in

@@ -44,7 +44,7 @@ Small local models are good at the main idea and bad at discipline. Where a prom
 | Problem seen | Fix |
 |--------------|-----|
 | Llama writes "Now let's check their activity" as text and the loop stopped half way | finishing is an explicit tool call, `final_answer`; plain text is nudged (max twice) |
-| Qwen writes `{"name": "query_identity", "arguments": {...}}` as message text instead of a real tool call | `recovery.py` converts it into a real call, only for tool names we offered |
+| Qwen writes `{"name": "query_identity", "arguments": {...}}` as message text instead of a real tool call | `recovery.py` converts it into a real call, only for tool names we offered. It also rescues a call inside a code fence or `<tool_call>` tags with prose around it ("I apologize... ```json {...}```"), but leaves bare JSON mixed into a sentence alone |
 | Llama sends `{"result_id": null, "column": null}` for an optional argument | `prune` removes nulls and empty strings before the call |
 | the server's JSON schema (`$ref`, `anyOf [x, null]`) confuses small models | `flatten_schema` inlines references and drops optional wrappers |
 | a failed tool call killed the run | errors come back as messages the model can read (`handle_tool_errors`) |
@@ -62,7 +62,7 @@ JSON text. The subprocess inherits the `IDENTITY_MCP_*` settings and quiet-loggi
 
 Tells the model: today's date; the two tools and what each covers; always use a tool; ask each tool one clear, self-contained
 question; a question needing both sides takes two calls (first tool, then the other with `filter_from = {result_id, column: "id"}`);
-for "who has no activity" ask exactly that, do not subtract lists yourself; use `row_count` for totals; read errors and fix the next
+never guess anyone's gender (use the name or "they"); for "who has no activity" ask exactly that, do not subtract lists yourself; use `row_count` for totals; read errors and fix the next
 call; never write what you are about to do, do it; earlier turns are only for working out references like "him"; finish with
 `final_answer`, without mentioning SQL or result ids.
 
@@ -72,7 +72,7 @@ The SQL is validated, but the sentence the model writes about the rows is not. A
 the data, name someone who is not in the rows, or quietly lose rows from a list. After `final_answer` the `verify` node checks, in plain code:
 
 1. **Numbers.** Every number in the answer must appear in the results (a row count, a cell value, a column's distinct count) or in a
-   question that was asked ("the last 90 days"). Dates and list numbering are ignored.
+   question that was asked ("the last 90 days"). Dates, times of day and list numbering are ignored.
 2. **Listed names.** Every bullet or numbered item that looks like a name (short, capitalised, no colon) must match something in a
    result cell.
 3. **Omissions.** If the answer lists at least half of the last result's names but not all of them, the missing ones are reported.

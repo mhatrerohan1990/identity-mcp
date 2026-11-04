@@ -23,7 +23,8 @@ Rules:
 - If a result has an `error`, read it and fix the next call (use the other tool, rerun the first step, rephrase).
 - Never write what you are going to do next; do it by calling the tool. Plain text is not a way to continue.
 - When you have all the data you need, finish by calling `final_answer` with your answer in plain language. List names for
-  short results, give counts for long ones, and say if the results were cut off. Do not mention SQL or result ids."""
+  short results, give counts for long ones, and say if the results were cut off. Do not mention SQL or result ids.
+- Never guess anyone's gender from their name: refer to a person by name or as "they", not "he" or "she"."""
 
 NUDGE_NO_TOOL = (
     "You have not called any data tool yet. Do not answer from memory: call query_identity or query_activity to get the data."

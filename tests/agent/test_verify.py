@@ -17,6 +17,12 @@ def result(rows, columns=("id", "name"), **extra):
 GROUPS = result([[1, "All Employees"], [2, "Engineering"], [3, "Sales"], [4, "Marketing"], [5, "Finance"], [6, "Legal"]])
 
 
+def test_a_time_of_day_in_the_answer_is_not_an_unsupported_number():
+    last = result([[7, "Arjun Mhatre", "2026-10-04 13:18:40"]], columns=("id", "name", "last_activity"))
+    assert verify.verify_answer("Arjun Mhatre was last active at 13:18:40 on 2026-10-04.", [last]) == []
+    assert verify.numbers_in("at 13:18:40 and 9:05, 2 of them") == {"2"}
+
+
 def test_numbers_ignore_dates_and_list_numbering():
     assert verify.numbers_in("1. Ava\n2. Bo\nSince 2026-11-01 there were 1,200 events (3.5 avg)") == {"1200", "3.5"}
 

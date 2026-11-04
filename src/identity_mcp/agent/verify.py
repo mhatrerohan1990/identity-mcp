@@ -5,7 +5,7 @@ was never in the data, a name that is not in any row, a list that quietly loses 
 validated; this checks the *wording* with three tests.
 
 1. **Numbers.** Every number in the answer must appear in the results (a row count, a cell value, how many distinct values a
-   column has) or in a question that was asked ("the last 90 days"). Dates and list numbering are ignored.
+   column has) or in a question that was asked ("the last 90 days"). Dates, times of day and list numbering are ignored.
 2. **Listed names.** Every bullet or numbered item that looks like a name must match something in the results.
 3. **Omissions.** If the answer lists most of the last result's names but not all of them, the missing ones are reported.
    An answer that lists none of them is read as a summary ("15 accounts"), not a list, and is not flagged.
@@ -24,6 +24,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMes
 
 NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?![\w])")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?")
+CLOCK = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b")  # a time of day on its own ("13:18:40"): an answer may quote just the time
 LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$")
 MARKER = re.compile(r"^\s*\d+[.)]\s+")  # "3. " at the start of a line is numbering, not a number the answer states
 MIN_VALUE_LENGTH = 3  # shorter cell values ("A", "IT") match too much text to prove anything
@@ -32,8 +33,8 @@ MAX_LISTED = 5  # at most this many problems of one kind are spelled out
 
 
 def numbers_in(text: str) -> set[str]:
-    """The numbers written in `text` as plain tokens (``"1,200"`` becomes ``"1200"``), ignoring dates and list numbering."""
-    cleaned = DATE.sub(" ", "\n".join(MARKER.sub("", line) for line in text.splitlines()))
+    """The numbers written in `text` as plain tokens (``"1,200"`` becomes ``"1200"``), ignoring dates, times of day and list numbering."""
+    cleaned = CLOCK.sub(" ", DATE.sub(" ", "\n".join(MARKER.sub("", line) for line in text.splitlines())))
     return {m.group(0).replace(",", "").rstrip(".") for m in NUMBER.finditer(cleaned)}
 
 

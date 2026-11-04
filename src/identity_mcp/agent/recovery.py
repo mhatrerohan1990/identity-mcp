@@ -5,7 +5,12 @@ body instead of the structured ``tool_calls`` field. Left alone, the loop reads 
 turns such a reply into a real tool call, but only when the JSON names one of the tools we actually offered, so ordinary
 prose, or JSON that is not a call, is never touched.
 
-Recognised shapes (optionally inside a Markdown code fence or ``<tool_call>`` tags)::
+A reply that is only the call is recovered, and so is a call in a Markdown code fence or ``<tool_call>`` tags with ordinary
+prose around it ("I apologize. Let's call the tool: ```json {...} ```"), which is how these models usually apologise and
+act in one message. JSON mixed into a sentence without a fence or tags is left alone, and so is any reply whose fenced
+blocks are not all calls to a tool we offered.
+
+Recognised shapes::
 
     {"name": "query_identity", "arguments": {"question": "..."}}
     {"name": "query_identity", "parameters": {"question": "..."}}
@@ -23,6 +28,7 @@ from langchain_core.messages import AIMessage
 
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 _TAGS = re.compile(r"^<tool_call>\s*(.*?)\s*</tool_call>$", re.DOTALL)
+_EMBEDDED = re.compile(r"```(?:json)?\s*(.*?)\s*```|<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
 
 def _parse(text: str) -> Any:
@@ -38,6 +44,15 @@ def _parse(text: str) -> Any:
         return None
 
 
+def _embedded(text: str) -> list[Any] | None:
+    """The JSON values of every code fence / ``<tool_call>`` block in `text`, or None if there is none or one is not JSON."""
+    blocks = [a or b for a, b in _EMBEDDED.findall(text)]
+    if not blocks:
+        return None
+    values = [_parse(block) for block in blocks]
+    return None if any(v is None for v in values) else values
+
+
 def recover_tool_calls(reply: AIMessage, names: set[str]) -> AIMessage:
     """`reply` with its text-form tool calls converted to real ones; unchanged if there is nothing to recover.
 
@@ -48,6 +63,11 @@ def recover_tool_calls(reply: AIMessage, names: set[str]) -> AIMessage:
     if reply.tool_calls or not isinstance(reply.content, str) or not reply.content.strip():
         return reply
     parsed = _parse(reply.content)
+    if parsed is None:  # not purely JSON: look for fenced or tagged calls inside surrounding prose
+        blocks = _embedded(reply.content)
+        if blocks is None:
+            return reply
+        parsed = [item for block in blocks for item in (block if isinstance(block, list) else [block])]
     items = parsed if isinstance(parsed, list) else [parsed]
     calls = []
     for item in items:
