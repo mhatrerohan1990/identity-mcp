@@ -1,3 +1,7 @@
+> **Historical document.** This is the original plan, written before the system was built. Several choices here changed (for example:
+> no BM25, two scoped MCP tools instead of four, a LangGraph agent, feedback goes to `feedback.db`). For how the system works now, read
+> [README.md](README.md) (the knowledge base).
+
 # identity-mcp design
 
 ## Goal

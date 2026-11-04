@@ -7,7 +7,7 @@ Each tool takes a plain-English question and answers it with the same guarded qu
 its own tables (``scopes.py``). A question that needs both ("dormant admin accounts") is answered by the *client*
 calling one tool and passing the result to the other: every result carries a ``result_id``, and a later call can name
 it in ``filter_from`` to restrict itself to those ids (``handoff.py``). The orchestration (the reason-act loop) lives in
-the client, as with any MCP server; ``agent.py`` is our own.
+the client, as with any MCP server; the ``agent`` package is our own.
 
 stdio (Claude Desktop / Claude Code):  uv run python -m identity_mcp.mcp_server
 HTTP: mounted at /mcp by the FastAPI app (see api/app.py).

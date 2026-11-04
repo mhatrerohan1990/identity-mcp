@@ -1,12 +1,13 @@
 # identity-mcp
 
 Ask questions about identity & access data in plain English. identity-mcp retrieves a few similar
-curated question→SQL examples (few-shot RAG), has Claude write a query, validates it with
+curated question→SQL examples (few-shot RAG), has a local model write a query, validates it with
 guardrails, runs it read-only on SQLite, and answers in natural language. Exposed as an MCP server
-behind a FastAPI app that also serves a chat UI. A small-scale version of a production
-governed-query assistant.
+(two scoped tools) behind a FastAPI app that also serves a chat UI, with a LangGraph agent that chains the tools.
+A small-scale version of a production governed-query assistant.
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the design.
+**Knowledge base:** [docs/](docs/README.md) explains every component and follows a question end to end
+([request flow](docs/02-request-flow.md)). [docs/DESIGN.md](docs/DESIGN.md) is the original plan, now historical.
 
 ## Status
 
@@ -89,7 +90,7 @@ SQLite sandbox refuses to read one even if both were bypassed. Only bank example
 admin access")`, then `query_activity("which of these users had no activity in the last 90 days?", filter_from={result_id,
 column: "id"})`. Each call returns `columns`, the first 25 `rows`, `row_count`, `truncated`, the `sql` that ran, a `result_id`
 and, on failure, `error`. No prose answer is written: the caller reasons over the rows. Chaining is the *client's* job
-(any MCP client; our own is `agent.py`), as it is when the data live in separate stores.
+(any MCP client; our own is the `agent/` package), as it is when the data live in separate stores.
 
 How the hand-off works (`handoff.py`): results are kept in server memory under their `result_id` for 30 minutes (at most 50;
 one server process). `filter_from` names a result and an id column (`id`, `*_id` or `email`; names are refused because they
