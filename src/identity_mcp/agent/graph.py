@@ -22,7 +22,7 @@ scripted model.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.language_models import BaseChatModel
@@ -132,13 +132,46 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool], max_steps: int 
     return graph.compile()
 
 
-def initial_state(question: str) -> AgentState:
-    """The starting state for one question."""
-    return {"messages": [HumanMessage(question)], "steps": 0, "nudges": 0}
+def initial_state(question: str, history: Sequence[tuple[str, str]] = ()) -> AgentState:
+    """The starting state for one question.
+
+    Args:
+        question: What the user is asking now.
+        history: Earlier turns of the chat as ``(question, answer)`` pairs, oldest first. They are shown to the model as
+            earlier messages so it can resolve "him" or "those users". Only the text is kept, not the tool results, so a
+            follow-up is a fresh look at the data rather than a reuse of stale rows.
+    """
+    earlier: list[AnyMessage] = []
+    for asked, answered in history:
+        earlier += [HumanMessage(asked), AIMessage(answered)]
+    return {"messages": [*earlier, HumanMessage(question)], "steps": 0, "nudges": 0}
+
+
+def answer_of(update: dict[str, Any]) -> str | None:
+    """The answer text if a node's `update` ends the run with one, else None.
+
+    A message without tool calls is the model's answer (from ``finish``, ``give_up``, or plain text once the nudges are
+    spent). Plain text that gets nudged is also such a message, so the caller keeps only the *last* one it sees.
+    """
+    found = None
+    for message in update.get("messages", []):
+        if isinstance(message, AIMessage) and not message.tool_calls:
+            found = message.content if isinstance(message.content, str) else str(message.content)
+    return found
+
+
+async def stream(graph: Any, question: str, history: Sequence[tuple[str, str]] = ()) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Run `graph` and yield ``(node_name, update)`` after each node finishes, in order. See :func:`initial_state` for the arguments."""
+    async for chunk in graph.astream(initial_state(question, history), stream_mode="updates"):
+        for node, update in chunk.items():
+            yield node, update
 
 
 async def run(
-    graph: Any, question: str, on_update: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None
+    graph: Any,
+    question: str,
+    on_update: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None,
+    history: Sequence[tuple[str, str]] = (),
 ) -> str:
     """Run `graph` on `question` and return the final answer text.
 
@@ -147,18 +180,16 @@ async def run(
         question: What the user asked.
         on_update: Optional callback ``(node_name, update)`` called after each node finishes, in order. Use it to show
             progress; the update holds the new messages that node produced.
+        history: Earlier turns, as in :func:`initial_state`.
 
     Returns:
         The text of the last message, which is the model's answer or the ``give_up`` message.
     """
     final = ""
-    async for chunk in graph.astream(initial_state(question), stream_mode="updates"):
-        for node, update in chunk.items():
-            if on_update is not None:
-                result = on_update(node, update)
-                if result is not None:
-                    await result
-            for message in update.get("messages", []):
-                if isinstance(message, AIMessage) and not message.tool_calls:
-                    final = message.content if isinstance(message.content, str) else str(message.content)
+    async for node, update in stream(graph, question, history):
+        if on_update is not None:
+            result = on_update(node, update)
+            if result is not None:
+                await result
+        final = answer_of(update) or final
     return final

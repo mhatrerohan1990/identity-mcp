@@ -1,6 +1,7 @@
 """The FastAPI application object.
 
-Routes: ``/health``, ``POST /api/ask`` (the same pipeline as the MCP ``ask`` tool), ``/`` (chat UI), the REST routers
+Routes: ``/health``, ``POST /api/ask`` (single-shot pipeline), ``POST /api/agent`` (the LangGraph agent, streamed; see
+``agent_routes.py``), ``/`` (chat UI), the REST routers
 from ``routes.py``, and the MCP server mounted last at ``/`` (endpoint ``/mcp``)."""
 
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from .. import pipeline
 from ..context.conversation import Turn
 from ..core.logs import configure
 from ..mcp_server import mcp
+from .agent_routes import router as agent_router
 from .routes import ALL
 
 STATIC = Path(__file__).parent / "static"
@@ -68,6 +70,7 @@ def chat_page():
     return FileResponse(STATIC / "index.html")
 
 
+app.include_router(agent_router)
 for router in ALL:
     app.include_router(router)
 

@@ -16,7 +16,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with two scoped tools, `query_identity` and `query_activity` (question → SQL → rows, local Qwen via Ollama) | done |
 | Hand-off between tools: a result id one tool returns, the next filters on (`handoff.py`) | done |
-| Agent: a LangGraph loop, our own MCP client, that chains the two tools (`agent/`) | done, command line; chat page not wired yet |
+| Agent: a LangGraph loop, our own MCP client, that chains the two tools (`agent/`) | done: command line and chat page |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt (embeddings) | done; hybrid with BM25 tried and dropped, no gain |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
@@ -24,7 +24,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
 | Eval suite (`evals/`): 93 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
 | Multi-turn: follow-ups ("the newer one", "what can he access?") rewritten into standalone questions (`conversation.py`) | done, stateless |
-| Chat UI (static page + `POST /api/ask`) | done, basic |
+| Chat UI (static page; `POST /api/agent` streams the agent, `POST /api/ask` is the single-shot pipeline) | done, basic |
 | Feedback loop, per-table tools | planned |
 
 ## Run it
@@ -176,7 +176,26 @@ Rules the loop adds, each from something a local model really did:
 
 Measured so far (one question, not an eval): dormant admins gives the same 15 people as a direct SQL join with both
 `qwen2.5-coder:14b` (43 s) and `llama3.1:8b` (49 s). Each model call is 3 to 15 s, so a two-tool question takes 40 to 60 s.
-Not done: the chat page still uses the single-shot pipeline, no chat memory across turns, and no agent eval cases.
+### In the chat page
+
+The chat page uses the agent by default (the drop-down in the header switches back to the single-query pipeline). `POST /api/agent`
+(`api/agent_routes.py`) streams NDJSON, one event per line, so the page draws each step as it happens and then shows the answer with the
+steps folded below it:
+
+```
+{"type": "tool_call",   "name": "query_identity", "question": "Which active users have admin access?", "filter_from": null}
+{"type": "tool_result", "name": "query_identity", "row_count": 72, "columns": [...], "rows": [...], "sql": "SELECT ..."}
+{"type": "tool_call",   "name": "query_activity", "question": "...", "filter_from": {"result_id": "r_d0aba8", "column": "id"}}
+{"type": "tool_result", ...}
+{"type": "answer",      "text": "...", "steps": 3, "elapsed_ms": 27816}        (or {"type": "error", "message": "..."})
+```
+
+Chat memory is stateless, as for `/api/ask`: the page sends the last 3 `(question, answer)` pairs and `graph.initial_state` shows them to the
+model as earlier messages, so "what groups is she in?" after "Who is Elena Johnson?" becomes a tool question about Elena Johnson. Only the
+text is passed on, not old rows, so a follow-up always fetches fresh data. `agent/trace.py` makes the events, `agent/session.py` runs the
+graph and never raises (a failure becomes an `error` event).
+
+Not done: agent eval cases, and saved chats.
 
 ## Validation
 
@@ -464,9 +483,11 @@ src/identity_mcp/
 ├── pipeline/      engine.py (ask), prompts.py, sql.py (write/check/repair),        the flow for one question
 │                  executor.py (run safely), answer.py (summary)
 ├── mcp_server.py  the two MCP tools                                                interface
-├── api/           app.py (chat page, /api/ask, mounts MCP), routes.py, static/     interface
+├── api/           app.py (chat page, /api/ask, mounts MCP), agent_routes.py         interface
+│                  (/api/agent, streamed), routes.py (REST), static/
 └── agent/         tools.py (MCP bridge), graph.py (LangGraph loop), prompts.py,     interface, talks to the server over MCP only
-                   recovery.py, __main__.py (command line)
+                   recovery.py, trace.py (step events), session.py (streamed run),
+                   __main__.py (command line)
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/rag/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baselines
 tests/                mirrors the package: core is covered through the others, then rag/, guardrails/, context/, pipeline/,

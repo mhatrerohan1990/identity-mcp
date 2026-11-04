@@ -1,6 +1,6 @@
 """The layer rules: each package may import only from the layers below it.
 
-    interfaces   mcp_server, api            may use pipeline, context, guardrails, core
+    interfaces   mcp_server, api            may use pipeline, context, guardrails, core (api also the agent)
     pipeline                                may use rag, guardrails, context, core
     rag, guardrails, context                may use core (and themselves)
     core                                    uses nothing else in the package
@@ -25,7 +25,7 @@ ALLOWED = {
     "context": {"core", "context"},
     "pipeline": {"core", "rag", "guardrails", "context", "pipeline"},
     "mcp_server": {"core", "context", "guardrails", "pipeline"},
-    "api": {"core", "context", "pipeline", "mcp_server", "api"},
+    "api": {"core", "context", "pipeline", "mcp_server", "agent", "api"},
     "agent": {"core"},
 }
 

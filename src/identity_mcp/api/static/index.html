@@ -36,9 +36,14 @@
   table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
   th, td { padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { position: sticky; top: 0; background: var(--code); }
+  .steps { margin-top: 0; }
+  .step { margin: 4px 0; font-size: 13px; color: var(--muted); }
+  .step b { color: var(--text); font-weight: 600; }
+  .step.bad { color: var(--err); }
+  #mode { margin-left: auto; font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
   .meta { margin-top: 6px; font-size: 12px; color: var(--muted); }
   .typing { color: var(--muted); font-style: italic; }
-  #newchat { margin-left: auto; font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+  #newchat { font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
   #newchat:hover { color: var(--text); border-color: var(--accent); }
   .hints { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
   .hints button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--text); cursor: pointer; }
@@ -53,7 +58,7 @@
 </style>
 </head>
 <body>
-<header><h1>identity-mcp</h1><span>Ask questions about users, groups, apps, access and activity</span><button type="button" id="newchat" title="Forget the conversation so far">New chat</button></header>
+<header><h1>identity-mcp</h1><span>Ask questions about users, groups, apps, access and activity</span><select id="mode" title="How questions are answered"><option value="agent">Agent (chains tools)</option><option value="single">Single query</option></select><button type="button" id="newchat" title="Forget the conversation so far">New chat</button></header>
 <div id="log"><div class="wrap" id="chat">
   <div class="msg bot" id="welcome"><div class="bubble welcome">Ask a question in plain English. Try one of these:
     <div class="hints" id="hints"></div></div></div>
@@ -64,7 +69,7 @@
 </div></form>
 <script>
 const chat = document.getElementById("chat"), log = document.getElementById("log"), form = document.getElementById("form");
-const q = document.getElementById("q"), send = document.getElementById("send");
+const q = document.getElementById("q"), send = document.getElementById("send"), mode = document.getElementById("mode");
 const history = [];  // earlier turns of this chat; sent with each question so follow-ups can be resolved (lost on refresh)
 const HISTORY_SENT = 3, ROWS_KEPT = 20;
 const SAMPLES = [
@@ -124,8 +129,65 @@ function addBot(data) {
   chat.append(m); scroll();
 }
 
+const SCOPE = { query_identity: "identity", query_activity: "activity" };
+
+function stepTable(m, ev) {  // one tool result: a line, with the SQL and rows folded underneath
+  const bad = !!ev.error, scope = SCOPE[ev.name] || ev.name;
+  const line = el("div", bad ? "step bad" : "step");
+  line.append(el("b", null, `\u2190 ${scope}: `), document.createTextNode(bad ? ev.error : `${ev.row_count} row${ev.row_count === 1 ? "" : "s"}${ev.truncated ? " (first " + ev.rows.length + " shown)" : ""}`));
+  m.steps.append(line);
+  if (ev.sql) { const d = el("details"); d.append(el("summary", null, "SQL")); d.append(el("pre", null, ev.sql)); m.steps.append(d); }
+  if (ev.rows && ev.rows.length) { const d = el("details"); d.append(el("summary", null, "Rows")); d.append(resultTable(ev.columns, ev.rows)); m.steps.append(d); }
+}
+
+function addStep(m, ev) {
+  if (ev.type === "tool_call") {
+    const line = el("div", "step"), link = ev.filter_from ? " (using the previous result)" : "";
+    line.append(el("b", null, `\u2192 ${SCOPE[ev.name] || ev.name}: `), document.createTextNode(ev.question + link));
+    m.steps.append(line);
+  } else if (ev.type === "tool_result") stepTable(m, ev);
+  else if (ev.type === "nudge") m.steps.append(el("div", "step", "(the model wrote text instead of calling a tool; asked to try again)"));
+}
+
+async function askAgent(question) {
+  const m = el("div", "msg bot"), box = el("div", "bubble"), status = el("div", "typing", "Thinking\u2026");
+  m.steps = el("div", "steps"); box.append(m.steps, status); m.append(box); chat.append(m); scroll();
+  let answer = null, failed = null;
+  const r = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, history: history.filter(t => t.answer).slice(-HISTORY_SENT) }) });
+  if (!r.ok) throw new Error(`Server returned ${r.status}`);
+  const reader = r.body.getReader(), decoder = new TextDecoder();
+  let buffer = "";
+  const handle = line => {
+    if (!line.trim()) return;
+    const ev = JSON.parse(line);
+    if (ev.type === "answer") answer = ev; else if (ev.type === "error") failed = ev.message; else addStep(m, ev);
+    scroll();
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n"); buffer = lines.pop();
+    lines.forEach(handle);
+  }
+  handle(buffer);
+  status.remove();
+  if (failed || !answer) { box.classList.add("error"); box.append(el("div", null, failed || "The agent returned no answer.")); return; }
+  m.insertBefore(el("div", "bubble", answer.text), box);  // the answer first, the steps it took folded below it
+  const d = el("details"); d.append(el("summary", null, `Steps (${m.steps.querySelectorAll(".step").length})`));
+  box.replaceWith(d); d.append(m.steps);
+  m.append(el("div", "meta", `${(answer.elapsed_ms / 1000).toFixed(1)}s \u00b7 ${answer.steps} model call${answer.steps === 1 ? "" : "s"}`));
+  history.push({ question, answer: answer.text });
+}
+
 async function ask(question) {
   addUser(question);
+  if (mode.value === "agent") {
+    send.disabled = true;
+    try { await askAgent(question); } catch (e) { addBot({ error: `Request failed: ${e.message}` }); }
+    finally { send.disabled = false; q.focus(); }
+    return;
+  }
   const wait = el("div", "msg bot"); wait.append(el("div", "bubble typing", "Thinking…")); chat.append(wait); scroll();
   send.disabled = true;
   try {

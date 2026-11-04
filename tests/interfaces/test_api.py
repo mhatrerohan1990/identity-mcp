@@ -78,3 +78,23 @@ def test_events_date_filter(client):
 def test_missing_db_is_503(tmp_path, monkeypatch):
     monkeypatch.setenv("IDENTITY_MCP_DB", str(tmp_path / "nope.db"))
     assert TestClient(app).get("/users").status_code == 503
+
+
+def test_agent_endpoint_streams_ndjson(client, monkeypatch):
+    from identity_mcp.agent import session
+
+    async def fake_events(question, history=()):
+        assert history == [("hi", "hello")]
+        yield {"type": "tool_call", "name": "query_identity", "question": question, "filter_from": None}
+        yield {"type": "answer", "text": "done", "steps": 1, "elapsed_ms": 5}
+
+    monkeypatch.setattr(session, "events", fake_events)
+    r = client.post("/api/agent", json={"question": " who? ", "history": [{"question": "hi", "answer": "hello", "rows": [[1]]}]})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
+    lines = [__import__("json").loads(line) for line in r.text.splitlines()]
+    assert [e["type"] for e in lines] == ["tool_call", "answer"] and lines[0]["question"] == "who?"
+
+
+def test_agent_endpoint_validates_the_body(client):
+    assert client.post("/api/agent", json={"question": ""}).status_code == 422
+    assert client.post("/api/agent", json={"question": "x", "history": [{"question": "a", "answer": None}]}).status_code == 422
