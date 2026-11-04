@@ -24,8 +24,8 @@ from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import traverse_scope
 
-from .db import db_path
-from .logs import flow
+from ..core.db import db_path
+from ..core.logs import flow
 from .validation import SCHEMA
 
 MAX_DISTINCT = 60  # a text column with more distinct values than this is free text (names, emails), not a category

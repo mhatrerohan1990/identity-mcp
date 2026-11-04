@@ -25,8 +25,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from . import llm
-from .logs import flow, one_line
+from ..core import llm
+from ..core.logs import flow, one_line
 
 MAX_TURNS = 3  # earlier turns shown to the rewriter (the most recent ones)
 MAX_ROWS = 5  # result rows shown per earlier turn

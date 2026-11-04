@@ -20,9 +20,10 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, Field
 
-from . import handoff, pipeline
-from .logs import configure
-from .scopes import ACTIVITY, IDENTITY, Scope
+from .context import handoff
+from . import pipeline
+from .core.logs import configure
+from .guardrails.scopes import ACTIVITY, IDENTITY, Scope
 
 SHOWN_ROWS = 25  # rows returned to the caller per call; the full result (up to 200 rows) stays available via result_id
 

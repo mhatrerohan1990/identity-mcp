@@ -7,7 +7,7 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
-from identity_mcp import bank
+from identity_mcp.rag import bank
 from identity_mcp.data import seed
 
 BANK = bank.bank_path()

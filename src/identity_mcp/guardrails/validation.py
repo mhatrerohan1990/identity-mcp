@@ -22,8 +22,8 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.qualify import qualify
 
-from .db import SCHEMA_SQL, connect_ro
-from .logs import flow
+from ..core.db import SCHEMA_SQL, connect_ro
+from ..core.logs import flow
 
 if TYPE_CHECKING:  # scopes.py imports this module (for SCHEMA), so the import is only for type hints
     from .scopes import Scope

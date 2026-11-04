@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "examples" / "examples.md"
+DEFAULT_PATH = Path(__file__).resolve().parents[3] / "examples" / "examples.md"
 
 _ENTRY = re.compile(
     r"^## (?P<id>ex-\d+)\n\*\*Q:\*\* (?P<q>[^\n]+)\n\*\*Tags:\*\* (?P<tags>[^\n]+)\n\n```sql\n(?P<sql>(?s:.+?))\n```"

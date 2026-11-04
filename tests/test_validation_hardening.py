@@ -4,7 +4,8 @@ import sqlite3
 
 import pytest
 
-from identity_mcp import pipeline, validation
+from identity_mcp import pipeline
+from identity_mcp.guardrails import validation
 from identity_mcp.data import seed
 
 
@@ -166,7 +167,7 @@ def test_timeouts_are_explained(env, monkeypatch):
 
 def test_ask_reports_runtime_failures_in_plain_language(env, monkeypatch):
     import asyncio
-    from identity_mcp import llm
+    from identity_mcp.core import llm
 
     monkeypatch.setattr(pipeline, "QUERY_TIMEOUT_S", 0.3)
     slow = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c"

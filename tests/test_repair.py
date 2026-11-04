@@ -3,7 +3,8 @@ import json
 
 import pytest
 
-from identity_mcp import llm, pipeline
+from identity_mcp.core import llm
+from identity_mcp import pipeline
 from identity_mcp.data import seed
 
 run = asyncio.run

@@ -3,7 +3,9 @@ import json
 
 import pytest
 
-from identity_mcp import bank, llm, pipeline, retrieval
+from identity_mcp.rag import bank, retrieval
+from identity_mcp.core import llm
+from identity_mcp import pipeline
 
 run = asyncio.run
 

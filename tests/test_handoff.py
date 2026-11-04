@@ -6,10 +6,12 @@ import json
 import pytest
 from mcp import Client
 
-from identity_mcp import handoff, llm, mcp_server, pipeline
+from identity_mcp.context import handoff
+from identity_mcp.core import llm
+from identity_mcp import mcp_server, pipeline
 from identity_mcp.data import seed
-from identity_mcp.handoff import HandoffError, Input, ResultStore
-from identity_mcp.scopes import ACTIVITY
+from identity_mcp.context.handoff import HandoffError, Input, ResultStore
+from identity_mcp.guardrails.scopes import ACTIVITY
 
 run = asyncio.run
 

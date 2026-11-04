@@ -7,9 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from identity_mcp import conversation, llm, pipeline
+from identity_mcp.context import conversation
+from identity_mcp.core import llm
+from identity_mcp import pipeline
 from identity_mcp.api.app import app
-from identity_mcp.conversation import Turn
+from identity_mcp.context.conversation import Turn
 from identity_mcp.data import seed
 
 run = asyncio.run

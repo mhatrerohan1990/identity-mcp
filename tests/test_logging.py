@@ -3,7 +3,8 @@ import logging
 
 import pytest
 
-from identity_mcp import llm, logs, pipeline
+from identity_mcp.core import llm, logs
+from identity_mcp import pipeline
 from identity_mcp.data import seed
 
 run = asyncio.run

@@ -4,7 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp import Client
 
-from identity_mcp import llm, mcp_server, pipeline
+from identity_mcp.core import llm
+from identity_mcp import mcp_server, pipeline
 from identity_mcp.api.app import app
 from identity_mcp.data import seed
 

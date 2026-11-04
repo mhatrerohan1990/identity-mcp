@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .db import SCHEMA_SQL
+from ..core.db import SCHEMA_SQL
 from .validation import SCHEMA
 
 

@@ -3,7 +3,8 @@ import zlib
 
 import pytest
 
-from identity_mcp import llm, retrieval
+from identity_mcp.core import llm
+from identity_mcp.rag import retrieval
 
 
 def fake_vector(text: str, dims: int = 256) -> list[float]:

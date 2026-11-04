@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from identity_mcp import bank
+from identity_mcp.rag import bank
 
 CASES_PATH = Path(__file__).with_name("cases.json")
 

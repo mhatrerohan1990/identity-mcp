@@ -18,11 +18,14 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import bank, conversation, grounding, handoff, llm, retrieval
-from .db import SCHEMA_SQL
-from .logs import configure, flow, new_request_id, one_line
-from .scopes import Scope
-from .validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
+from .rag import bank, retrieval
+from .context import conversation, handoff
+from .guardrails import grounding
+from .core import llm
+from .core.db import SCHEMA_SQL
+from .core.logs import configure, flow, new_request_id, one_line
+from .guardrails.scopes import Scope
+from .guardrails.validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
 
 TODAY = "2026-11-01"  # matches the seed data
 MAX_ROWS = 200  # rows returned to the caller

@@ -7,7 +7,10 @@ import sqlite3
 
 import pytest
 
-from identity_mcp import bank, grounding, llm, pipeline
+from identity_mcp.rag import bank
+from identity_mcp.guardrails import grounding
+from identity_mcp.core import llm
+from identity_mcp import pipeline
 from identity_mcp.data import seed
 
 run = asyncio.run

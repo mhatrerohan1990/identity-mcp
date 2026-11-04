@@ -7,7 +7,7 @@ from collections.abc import Iterator
 
 from fastapi import HTTPException
 
-from ..db import connect_ro
+from ..core.db import connect_ro
 
 
 def get_db() -> Iterator[sqlite3.Connection]:

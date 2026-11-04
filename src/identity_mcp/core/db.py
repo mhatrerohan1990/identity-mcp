@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 
-SCHEMA_SQL = (Path(__file__).parent / "data" / "schema.sql").read_text()
+SCHEMA_SQL = (Path(__file__).resolve().parent.parent / "data" / "schema.sql").read_text()
 
 
 def db_path() -> Path:

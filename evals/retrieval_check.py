@@ -23,8 +23,8 @@ import asyncio
 import re
 from dataclasses import dataclass
 
-from identity_mcp import bank, retrieval
-from identity_mcp.validation import SCHEMA
+from identity_mcp.rag import bank, retrieval
+from identity_mcp.guardrails.validation import SCHEMA
 
 from . import cases as cases_mod
 

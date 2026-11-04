@@ -5,7 +5,8 @@ import pytest
 from evals import cases as cases_mod
 from evals import metrics
 from evals.run import Result, summarize
-from identity_mcp import bank, pipeline
+from identity_mcp.rag import bank
+from identity_mcp import pipeline
 
 
 @pytest.fixture(scope="module")

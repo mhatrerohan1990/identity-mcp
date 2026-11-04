@@ -14,8 +14,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import bank, llm
-from .logs import flow
+from . import bank
+from ..core import llm
+from ..core.logs import flow
 
 K = int(os.environ.get("IDENTITY_MCP_EXAMPLES_K", "4"))
 MIN_SCORE = float(os.environ.get("IDENTITY_MCP_EXAMPLES_MIN_SCORE", "0.5"))

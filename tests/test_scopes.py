@@ -6,9 +6,12 @@ import sqlite3
 
 import pytest
 
-from identity_mcp import bank, llm, pipeline, validation
+from identity_mcp.rag import bank
+from identity_mcp.core import llm
+from identity_mcp import pipeline
+from identity_mcp.guardrails import validation
 from identity_mcp.data import seed
-from identity_mcp.scopes import ACTIVITY, IDENTITY, SCOPES, tables_in
+from identity_mcp.guardrails.scopes import ACTIVITY, IDENTITY, SCOPES, tables_in
 
 run = asyncio.run
 

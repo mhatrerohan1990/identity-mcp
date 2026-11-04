@@ -25,9 +25,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from identity_mcp import llm, pipeline, retrieval
-from identity_mcp.db import db_path
-from identity_mcp.logs import configure
+from identity_mcp.core import llm
+from identity_mcp import pipeline
+from identity_mcp.rag import retrieval
+from identity_mcp.core.db import db_path
+from identity_mcp.core.logs import configure
 
 from . import cases as cases_mod
 from . import metrics

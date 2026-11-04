@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .. import pipeline
-from ..conversation import Turn
-from ..logs import configure
+from ..context.conversation import Turn
+from ..core.logs import configure
 from ..mcp_server import mcp
 from .routes import ALL
 
