@@ -17,7 +17,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
 | Question bank: 100 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
-| Validation before execution: static checks, then an `EXPLAIN` dry run | done |
+| Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
 | Harness: proper eval suite | next |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
@@ -115,22 +115,32 @@ Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to
 ## Validation
 
 Generated SQL is validated before it runs; a query that fails is **not executed** and the user is told why.
+Three layers, outermost first:
 
-1. **Static check** (parsed and inspected, never run): exactly one `SELECT`/`WITH...SELECT` (no `DELETE`,
-   `PRAGMA`, `ATTACH`, second statement, `load_extension`, table-valued functions); every table is in the
-   schema; every column resolves against its table (catches invented columns, a column on the wrong
-   table, reused aliases); no `date('now')`/`CURRENT_DATE`, because the data's "today" is fixed at 2026-11-01.
-2. **Dry run**: `EXPLAIN` on the read-only connection, so SQLite itself confirms it can compile the query
-   (catches things like unknown functions) without executing it.
+1. **Static check** (parsed and inspected, never run): at most 4000 characters; exactly one
+   `SELECT`/`WITH...SELECT` (no `DELETE`, `PRAGMA`, `ATTACH`, second statement, table-valued functions); every
+   table is in the schema; every column resolves against its table (catches invented columns, a column on the
+   wrong table, ambiguous columns, reused aliases, `"double-quoted"` text values); every join has a real
+   condition (no cartesian products); only allowed functions (aggregates, date functions, string basics;
+   not `randomblob`, `zeroblob`, `printf`, `load_extension`, ...); no `date('now')`/`CURRENT_DATE`, because the
+   data's "today" is fixed at 2026-11-01.
+2. **Dry run**: `EXPLAIN`, so SQLite itself confirms it can compile the query (catches things like a wrong
+   number of arguments to a function) without executing it.
+3. **Sandboxed connection**, used for the dry run *and* for execution: SQLite's authorizer allows only `SELECT`,
+   reads of the schema's tables, and the allowed functions, and a size limit (1 MB) stops any value a query
+   builds from growing. This uses SQLite's own parser, so it holds even if sqlglot reads a query differently.
+   Execution also has a 5-second limit and a 200-row cap, and `execute()` refuses SQL that fails the static
+   check, so no code path runs unvalidated SQL.
 
-The schema used for checking is read from `schema.sql`, so there is no second copy. On failure `ask`
-returns `validation_errors` (a list of short messages that name the problem and the columns that do
-exist), `error`, and an `answer` explaining that nothing was run; the rejected `sql` is still returned.
-All 100 question-bank queries pass validation (tested), and 18 bad or hostile queries are rejected at the
-right stage.
+The schema used for checking is read from `schema.sql`, so there is no second copy. On failure `ask` returns
+`validation_errors` (short messages that name the problem and how to fix it), `error`, and an `answer`
+explaining that nothing was run; the rejected `sql` is still returned. A query that is valid but times out or
+exceeds the size limit is reported in plain language (`error`).
 
-Validation catches broken and unsafe SQL, not wrong SQL: a valid query that answers the wrong question
-(say, an invented date filter) passes. That is what the examples and the eval are for.
+Checked against: all 100 question-bank queries (none rejected), 56 distinct queries Llama actually generated
+in evals (validator and SQLite agree on every one), and a suite of hostile and sloppy queries. Validation
+catches broken and unsafe SQL, not wrong SQL: a valid query that answers the wrong question (say, an invented
+date filter) passes. That is what the examples and the eval are for.
 
 ### Repair loop
 

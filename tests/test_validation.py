@@ -43,7 +43,8 @@ def test_every_bank_query_passes_validation(con):
     ("SELECT COUNT(* FROM users", "static", "syntax error"),
     ("   ", "static", "empty"),
     ("-- nothing", "static", "empty"),
-    ("SELECT frobnicate(name) FROM users", "dry_run", "no such function: frobnicate"),
+    ("SELECT frobnicate(name) FROM users", "static", "Function frobnicate() is not allowed"),
+    ("SELECT substr(name) FROM users", "dry_run", "wrong number of arguments to function substr()"),
 ])
 def test_rejects_bad_queries_at_the_right_stage(con, sql, stage, message):
     v = validation.validate(sql, con)

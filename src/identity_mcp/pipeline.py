@@ -18,9 +18,9 @@ import time
 from typing import Any
 
 from . import llm, retrieval
-from .db import SCHEMA_SQL, connect_ro
+from .db import SCHEMA_SQL
 from .logs import configure, flow, new_request_id, one_line
-from .validation import validate
+from .validation import MAX_VALUE_BYTES, ValidationError, connect_query, normalize, validate, validate_static
 
 TODAY = "2026-11-01"  # matches the seed data
 MAX_ROWS = 200  # rows returned to the caller
@@ -113,15 +113,38 @@ async def repair_sql(question: str, hits: list[retrieval.Hit] | None, failed: li
     return await _request_sql(messages)
 
 
+class QueryError(RuntimeError):
+    """A validated query that SQLite could not complete (timeout, size limit, ...), with a readable reason."""
+
+
+def _explain_failure(e: sqlite3.Error) -> str:
+    text = str(e)
+    if "interrupted" in text:
+        return f"The query ran longer than {QUERY_TIMEOUT_S:g} seconds and was stopped. It is probably missing a join condition or scanning far too much."
+    if "too big" in text:
+        return f"The query built a value larger than the {MAX_VALUE_BYTES // 1_000_000} MB limit."
+    if "not authorized" in text:
+        return f"SQLite refused an operation the sandbox does not allow: {text}."
+    return f"{type(e).__name__}: {text}"
+
+
 def execute(sql: str) -> dict[str, Any]:
-    """Run `sql` on a read-only connection with a time limit and row cap."""
-    con = connect_ro()
+    """Run `sql` on the sandboxed read-only connection with a time limit and row cap.
+
+    Refuses anything that fails the static checks, so no caller can run unvalidated SQL by accident.
+    """
+    errors = validate_static(sql)
+    if errors:
+        raise ValidationError(errors)
+    con = connect_query()
     deadline = time.monotonic() + QUERY_TIMEOUT_S
     con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10_000)
     try:
-        cur = con.execute(sql)
+        cur = con.execute(normalize(sql))
         columns = [d[0] for d in cur.description or []]
         rows = [list(r) for r in cur.fetchmany(MAX_ROWS + 1)]
+    except (sqlite3.OperationalError, sqlite3.DataError) as e:
+        raise QueryError(_explain_failure(e)) from e
     finally:
         con.close()
     truncated = len(rows) > MAX_ROWS
@@ -234,6 +257,9 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
     except llm.LLMError as e:
         out["error"] = str(e)
         out["answer"] = f"I couldn't reach the language model: {e}"
+    except (QueryError, ValidationError) as e:
+        out["error"] = str(e)
+        out["answer"] = f"The query couldn't be completed: {e}"
     except (sqlite3.Error, FileNotFoundError) as e:
         out["error"] = f"{type(e).__name__}: {e}"
         out["answer"] = "I generated a query but it failed to run, so I can't answer that yet."

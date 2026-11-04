@@ -58,8 +58,8 @@ def test_pipeline_bad_sql_is_reported_not_raised(db, monkeypatch):
 
 
 def test_execution_is_read_only(db):
-    with pytest.raises(Exception, match="readonly|read-only|query_only"):
-        pipeline.execute("DELETE FROM users")
+    with pytest.raises(pipeline.ValidationError, match="Only SELECT"):
+        pipeline.execute("DELETE FROM users")  # refused before it reaches the database
     assert pipeline.execute("SELECT COUNT(*) FROM users")["rows"] == [[500]]
 
 

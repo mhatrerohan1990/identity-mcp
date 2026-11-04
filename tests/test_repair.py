@@ -95,7 +95,7 @@ def test_valid_first_try_costs_nothing_extra(env, monkeypatch):
 
 def test_dry_run_failures_are_repaired_too(env, monkeypatch):
     calls = []
-    monkeypatch.setattr(llm, "chat", scripted(["SELECT frobnicate(name) FROM users", "SELECT upper(name) FROM users"], calls))
+    monkeypatch.setattr(llm, "chat", scripted(["SELECT substr(name) FROM users", "SELECT substr(name, 1, 3) FROM users"], calls))
     out = run(pipeline.ask("q", k=0))
     assert out["repairs"] == 1 and out["attempts"][0]["stage"] == "dry_run"
-    assert "no such function: frobnicate" in calls[1][3]["content"]
+    assert "wrong number of arguments to function substr()" in calls[1][3]["content"]
