@@ -87,8 +87,18 @@ def test_grade_empty_expected_requires_empty_actual():
     assert metrics.grade([], [["x"]]) == "wrong"
 
 
-def test_grade_floats_compare_to_six_significant_digits():
+def test_grade_floats_compare_to_two_decimals():
     assert metrics.grade([[0.1 + 0.2]], [[0.3]]) == "exact"
+    assert metrics.grade([[3.89]], [[3.8889760075270505]]) == "exact"
+    assert metrics.grade([[3.89]], [[3.95]]) == "wrong"
+
+
+def test_the_identifying_column_skips_ids():
+    gold = [[1, "ann"], [2, "bob"]]
+    assert metrics.grade(gold, [["ann"], ["bob"]], ["id", "name"]) == "entities"   # the id column was left out
+    assert metrics.grade(gold, [["ann"], ["bob"]]) == "wrong"                       # without names it keys on column 0
+    assert metrics.grade(gold, [["ann"], ["eve"]], ["id", "name"]) == "wrong"       # the people still have to match
+    assert metrics._identifying_column(["user_id", "id"]) == 0                      # all ids: fall back to the first
 
 
 def _result(outcome, kind="paraphrase", first_ok=True, repairs=0):

@@ -9,9 +9,12 @@ Rows = list[list[Any]]
 
 
 def _norm(v: Any) -> str:
-    """Canonical text for one cell so equal values compare equal: floats to 6 significant digits, everything else via ``repr``.
+    """Canonical text for one cell so equal values compare equal.
+
+    Floats are rounded to 2 decimals (so ``3.8889`` equals a reference that rounded to ``3.89``); everything else
+    goes through ``repr``.
     """
-    return f"{v:.6g}" if isinstance(v, float) else repr(v)
+    return f"{v:.2f}" if isinstance(v, float) else repr(v)
 
 
 def _columns(rows: Rows) -> list[Counter]:
@@ -45,27 +48,37 @@ def complete(expected: Rows, actual: Rows) -> bool:
     return all(_found(want, have) for want in _columns(expected))
 
 
-def entities(expected: Rows, actual: Rows) -> bool:
-    """Same number of rows, and the expected *first* column (the thing asked about: the people, the departments,
-    the count) appears as some actual column.
+def _identifying_column(names: list[str]) -> int:
+    """Index of the column that says what the rows *are*: the first one that is not an id (``id``, ``user_id``, ...).
 
-    The gold queries are deliberately verbose (name, email, department, ...). A leaner query that lists the
-    right people is still a right answer, so only the leading column has to match. A wrong count of rows,
-    or the wrong people, still fails.
+    A reference that starts with ``id, name, email`` is about the people, not the ids; a query that returns name and
+    email without the id still answers the question. Falls back to column 0 if every column is an id.
+    """
+    return next((i for i, n in enumerate(names) if n != "id" and not n.endswith("_id")), 0)
+
+
+def entities(expected: Rows, actual: Rows, names: list[str] | None = None) -> bool:
+    """Same number of rows, and the expected identifying column appears as some actual column.
+
+    The identifying column is the first non-id column of the reference (the people, the departments, the count),
+    chosen with `names` (the reference's column names; column 0 if omitted). The gold queries are deliberately
+    verbose (name, email, department, ...), so a leaner query that lists the right people is still a right answer.
+    A wrong number of rows, or the wrong people, still fails.
     """
     if len(expected) != len(actual):
         return False
     if not expected:
         return True
-    return _found(_columns(expected)[0], _columns(actual))
+    index = _identifying_column(names) if names else 0
+    return _found(_columns(expected)[index], _columns(actual))
 
 
-def grade(expected: Rows, actual: Rows) -> str:
-    """exact > complete > entities > wrong"""
+def grade(expected: Rows, actual: Rows, names: list[str] | None = None) -> str:
+    """exact > complete > entities > wrong. `names` are the reference's column names (see :func:`entities`)."""
     if exact(expected, actual):
         return "exact"
     if complete(expected, actual):
         return "complete"
-    if entities(expected, actual):
+    if entities(expected, actual, names):
         return "entities"
     return "wrong"

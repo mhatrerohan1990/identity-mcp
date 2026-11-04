@@ -423,7 +423,7 @@ ORDER BY a.name
 ```sql
 SELECT a.name AS application, COUNT(*) AS grants
 FROM access_grants g JOIN entitlements e ON e.id = g.entitlement_id JOIN applications a ON a.id = e.app_id
-GROUP BY a.id ORDER BY grants DESC LIMIT 15
+GROUP BY a.id ORDER BY grants DESC
 ```
 
 ## ex-045

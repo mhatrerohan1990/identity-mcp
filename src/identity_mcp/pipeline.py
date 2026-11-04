@@ -40,6 +40,11 @@ Rules:
 - "Admin" access means entitlements.is_admin = 1. Access a user holds is in access_grants.
 - Select human-readable columns (names, emails) rather than only ids.
 - Add only the filters the question asks for. Do not invent conditions on status, dates, entitlements or grant type.
+- "How many ..." questions return one number (COUNT), not a list of rows.
+- Roles, jobs, positions and titles of people are users.title; entitlements are permissions inside applications.
+- Questions about people return one row per person (GROUP BY u.id or SELECT DISTINCT), never one row per grant,
+  membership or event. Put per-person counts in columns. Questions about applications return one row per application.
+- "Each" and "every" list all of them; use LIMIT only for "top N", "most" or "largest" questions.
 - Match a person named in the question with name LIKE '%Name%' (names are not unique), and include id and email.
 Respond with JSON: {{"sql": "<the query>"}}"""
 

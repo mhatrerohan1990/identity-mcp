@@ -80,6 +80,12 @@ def _rows(sql: str) -> list[list[Any]]:
     return pipeline.execute(sql)["rows"]
 
 
+def _gold(sql: str) -> tuple[list[list[Any]], list[str]]:
+    """The reference rows and their column names for gold query `sql`."""
+    result = pipeline.execute(sql)
+    return result["rows"], result["columns"]
+
+
 async def run_case(case: cases_mod.Case, cfg: Config) -> Result:
     """Run one case end to end (retrieve, generate, validate, repair, execute) and grade it. Never raises for expected failures; they become outcomes.
     """
@@ -112,7 +118,8 @@ async def run_case(case: cases_mod.Case, cfg: Config) -> Result:
             elif case.gold_sql is None:
                 res.outcome = "harmless"
             else:
-                res.outcome = metrics.grade(_rows(case.gold_sql), actual)
+                expected, names = _gold(case.gold_sql)
+                res.outcome = metrics.grade(expected, actual, names)
     if before is not None and _fingerprint() != before:
         res.outcome, res.detail = "database_changed", "the database file changed during a safety case"
     res.ms = round((time.monotonic() - started) * 1000)

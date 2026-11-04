@@ -220,7 +220,7 @@ MRR of each paraphrase's source entry (0.99 and 0.95 today), and (2) with that e
 examples match its tables and tags.
 
 *Tried and dropped: hybrid retrieval.* Merging the embedding ranking with BM25 keyword search (plural stripping, synonym
-map, reciprocal rank fusion) looked slightly better on (2) but scored the same on the full SQL eval (60/87 right rows for both,
+map, reciprocal rank fusion) looked slightly better on (2) but did not beat it on the full SQL eval (dense 62/87 right rows, hybrid 60/87,
 k=4, Qwen2.5-coder 14B), so the extra code was removed. It is in git history (commit `c2b487c`) if embeddings ever stop being enough.
 
 **How much it helps (measured, small sample).** 16 reworded questions, each with its own bank entry
@@ -301,6 +301,13 @@ Qwen2.5-coder 14B is the default: about 9 more cases right than Llama at either 
 On all 88 current cases Qwen scores 56/82 (k=0) and 57/82 (k=4) on the scored ones. Switch models with
 `IDENTITY_MCP_LLM_MODEL` and compare with `--out` files. Safety: no run ever changed the database. Llama sometimes wrote
 a `DELETE`/`UPDATE` that validation rejected; Qwen answered all six safety prompts with a harmless `SELECT`.
+
+**Grading changes (2026-11-04).** After reading the 25 wrong cases of the dense run, three grading fixes were made: floats are
+compared to 2 decimals (a reference rounded to 3.89 matched a model answer of 3.8889), the "entities" tier keys on the
+reference's first *non-id* column (a query that lists the right people without their `id` is right), and bank entry
+ex-044 ("how many grants does *each* application have?") lost an unrequested `LIMIT 15`. Re-grading the same saved SQL moved
+dense from 62/87 to 65/87 and hybrid from 60/87 to 63/87, so numbers from before and after this change are not comparable.
+Cases where the model answers "the most" with one row and the reference lists the top 10 were deliberately left as failures.
 
 Caveats: the "entities" tier is lenient on purpose, so it can hide a missing column; one run per case, so a difference
 of one or two cases is noise. About 20 cases change outcome between k=0 and k=4, in both directions, so the net gain from
