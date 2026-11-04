@@ -16,7 +16,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Qwen via Ollama) | done, basic flow |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
-| Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
+| Retrieval (RAG) of similar bank examples into the SQL prompt: embeddings + BM25 keywords, fused | done, hybrid not yet measured against the model |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
@@ -62,7 +62,8 @@ Configuration (environment variables):
 | `IDENTITY_MCP_LLM_MODEL` | `qwen2.5-coder:14b` | Ollama model used for both SQL generation and answers (e.g. `llama3.1:8b`) |
 | `IDENTITY_MCP_EMBED_MODEL` | `nomic-embed-text` | Embedding model for example retrieval |
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
-| `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
+| `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to enter the embedding ranking (the keyword ranking needs a shared word instead) |
+| `IDENTITY_MCP_RETRIEVAL` | `hybrid` | Retrieval strategy: `hybrid`, `dense` (embeddings only) or `lexical` (keywords only, no embedding model) |
 | `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
 | `IDENTITY_MCP_MAX_REPAIRS` | `2` | Retries after a query fails validation; `0` disables the repair loop |
 | `IDENTITY_MCP_LOG_LEVEL` | `INFO` | Level for the flow log (`DEBUG`, `INFO`, `WARNING`, ...) |
@@ -210,10 +211,21 @@ The `prompt` lines are the exact messages sent to Ollama and its raw replies, an
 per question). Set `IDENTITY_MCP_LOG_PROMPTS=0` to keep only the one-line `flow` steps. Prompts and the
 answer-step prompt contain query results, so treat these logs as sensitive once the data is real.
 
-**How retrieval works.** The bank's 104 questions are embedded once (cached in `.cache/`). For each
-incoming question, the closest `k` entries are added to the SQL prompt as worked examples (question,
-SQL, and notes), best match last. `ask` returns the entries it used in `examples` (id, question,
-score). If the embedding model is unavailable it answers without examples and sets `warning`.
+**How retrieval works.** Hybrid: two rankings of the bank are merged.
+
+- *Dense* (`retrieval.py`): the bank's 104 questions are embedded once (cached in `.cache/`) and ranked by cosine
+  similarity to the question. Good at paraphrase, but `nomic-embed-text` scores cluster between 0.5 and 0.8, so it is
+  weak at telling similar entries apart.
+- *Keyword* (`lexical.py`): BM25 over each entry's question and tags, after lower-casing, dropping filler words,
+  stripping plurals and mapping synonyms (`left`/`departed` -> `terminated`, `2FA`/`two-factor` -> `mfa`,
+  `apps` -> `application`). Blind to paraphrase but precise about the words that matter.
+- *Fusion*: reciprocal rank fusion, `1 / (60 + rank)` summed over the rankings, so the two score scales never need
+  reconciling. The best `k` become worked examples in the SQL prompt (question, SQL and notes), best match last.
+
+`IDENTITY_MCP_RETRIEVAL=dense|lexical|hybrid` switches strategy (default `hybrid`). `ask` returns the entries it used in
+`examples` (id, question, score). If the embedding model is unavailable it answers without examples and sets
+`warning`. To check retrieval alone, without the chat model: `uv run python -m evals.retrieval_check` (recall@k and MRR of
+each paraphrase's source entry per strategy).
 
 **How much it helps (measured, small sample).** 16 reworded questions, each with its own bank entry
 hidden, scored by whether the result contains the right entities: 8/16 without examples, 9 to 11/16 with
@@ -349,7 +361,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG: fuses embeddings and `lexical.py` BM25), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
 tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests

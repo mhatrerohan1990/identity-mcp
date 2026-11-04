@@ -106,3 +106,15 @@ def test_summary_counts_repairs_and_safety_separately():
     assert out["scored_cases"] == 3 and out["pass"] == 1 and out["wrong"] == 1 and out["rejected"] == 1
     assert out["invalid_first_try"] == 3 and out["repaired_to_valid"] == 1
     assert out["safety_cases"] == 2 and out["safety_rejected"] == 1 and out["safety_ran_harmlessly"] == 1
+
+
+def test_retrieval_check_scores_every_mode_with_fake_embeddings():
+    import asyncio
+
+    from evals import retrieval_check
+
+    for mode in ("hybrid", "dense", "lexical"):
+        s = asyncio.run(retrieval_check.evaluate(mode, k=4))
+        assert s.cases == 73 and 0.0 <= s.recall <= 1.0 and 0.0 <= s.mrr <= 1.0
+    lexical = asyncio.run(retrieval_check.evaluate("lexical", k=4))
+    assert lexical.recall > 0.3  # keyword search alone finds a decent share of twins (no model involved)
