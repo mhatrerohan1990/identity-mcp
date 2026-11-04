@@ -14,6 +14,7 @@ from typing import Any
 from ..context import conversation, handoff
 from ..core import llm
 from ..core.logs import flow, new_request_id, one_line
+from ..guardrails import intent
 from ..guardrails.scopes import Scope
 from ..guardrails.validation import ValidationError
 from ..rag import bank, retrieval
@@ -51,6 +52,9 @@ async def ask(
     With `summarize_answer` False no plain-English answer is written (`answer` stays empty): a calling agent that
     reasons over the rows itself does not need one, and the step is the slowest model call.
 
+    A request to change data ("delete all admins") is not run: it comes back at once with `refused` True and the read-only
+    message as the `answer` (see ``guardrails/intent.py``). That is a reply, not an error, so `error` is not set.
+
     `k` overrides how many bank examples are retrieved (0 disables retrieval); `exclude` hides bank ids
     (used by evals to hold questions out).
     """
@@ -64,6 +68,11 @@ async def ask(
         out["input_count"] = inputs.count
     timings: dict[str, int] = {}
     out["timings_ms"] = timings
+    refusal = intent.check(question)  # a request to change data is answered at once: no retrieval, no model, no query
+    if refusal is not None:
+        flow.warning("refused a request to %s (read-only): %r", refusal.verb, question)
+        out.update(answer=refusal.message, refused=True)
+        return out
     try:
         if history:  # a follow-up is made standalone first; everything below runs on the rewritten question
             t = time.monotonic()

@@ -67,6 +67,9 @@ Example question: **"Show me dormant admin accounts"** (a question that needs bo
 
 4. FastAPI validates the body (`AgentRequest`): question 1 to 1000 characters, at most 6 history turns accepted (the last 3 used).
    Bad input is rejected with 422 before anything else happens.
+   **Intent check** (`guardrails/intent.py`, plain code, runs before anything else): a request to change data ("can you delete all
+   admins") is answered immediately with a fixed read-only message, as one `answer` event with `refused: true`. No model is used and
+   none of the steps below happen. Questions that merely *mention* changes ("which users were deleted last month?") pass through.
 5. It returns a `StreamingResponse` (`application/x-ndjson`) fed by `event_lines()`. The agent code is imported *here*, lazily,
    because LangGraph is an optional install; if it is missing the stream carries one `error` event instead of a 500.
 
@@ -260,6 +263,7 @@ For one generated query (`pipeline/sql.check_sql`, then execution):
 
 | # | Check | What it catches | Example message |
 |---|-------|-----------------|------------------------|
+| -1 | **Intent** (before everything) | a request to delete, change, grant or create something | "This assistant is read-only, so I can't delete anything. ..." |
 | 0 | **Unused input** (hand-off only) | the query ignores the earlier result | the query must read the `input` table |
 | 1 | **Length** | a query over 4000 characters | "The query is too long ..." |
 | 2 | **Parse** (sqlglot) | not valid SQL | "SQL syntax error: ..." |
@@ -312,6 +316,7 @@ summary. Everything else (validation, grounding, verification, hand-off, sandbox
 | Query too slow / too big | the sandbox stops it | "The query ran longer than 5 seconds ..." |
 | Tool call fails in the agent | the error comes back as a message the model can read | the model reruns, rephrases or uses the other tool |
 | Bad `filter_from` (expired id) | `HandoffError` text returned as `error` | the model re-runs the first step |
+| Request to change data ("delete all admins") | the intent check answers at once, in the endpoint and again in `pipeline.ask` | "This assistant is read-only, so I can't delete anything ..."; no model call |
 | Model never finishes | after 6 model calls the graph stops | "I ran out of steps (6) before finishing ..." with what was done |
 | Answer disagrees with the data | `verify` sends it back once, then adds a note | the answer with "(Note: this answer could not be fully checked ...)" and "not fully verified" |
 | Agent not installed / server unreachable | an `error` event instead of a crash | "The agent could not finish: ..." |

@@ -7,6 +7,7 @@
 | Security | **No authentication or authorization.** Anyone who can reach the port can call every endpoint and tool. Guardrails stop unsafe *queries*; they do not identify *callers*. |
 | Chats | No saved conversations. History lives in the browser tab; refresh loses it. No conversation id on the server. |
 | Agent quality | No agent evals. Only the dormant-admins chain has been checked end to end, on both local models. |
+| Intent check | Verb patterns, not understanding: a rare phrasing of a write request can slip past it (it still cannot write: validation and the read-only connection hold), and a very unusual data question could be refused by mistake. |
 | Answer quality | Verification checks wording against rows, not whether the query was the right one. Ambiguous names can be merged in one answer. |
 | Prompt rules | Rules added after the last review of wrong cases have not been measured. |
 | Bank coverage | Known gaps: count vs list phrasing, one row per person, dormant-admin counts. |

@@ -11,6 +11,7 @@ calling it. It runs the steps below and never raises for an expected failure: pr
 
 ```
 ask(question)
+  0. intent check: a request to change data is refused at once   guardrails/intent.py   (no model)
   1. rewrite follow-up (only with history)        context/conversation.py   -> model call
   2. retrieve k examples                          rag/retrieval.py          -> embedding call
   3. build the prompt                             pipeline/prompts.py

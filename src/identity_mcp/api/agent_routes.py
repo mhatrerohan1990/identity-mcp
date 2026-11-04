@@ -17,6 +17,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..guardrails import intent
+
 router = APIRouter(tags=["chat"])
 
 
@@ -42,7 +44,15 @@ HISTORY_USED = 3
 
 
 async def event_lines(body: AgentRequest) -> AsyncIterator[str]:
-    """The agent's events for `body` as NDJSON lines. A missing optional dependency becomes an ``error`` event, not a 500."""
+    """The agent's events for `body` as NDJSON lines.
+
+    A request to change data is refused first (one ``answer`` event with ``refused`` true; no model is used). A missing
+    optional dependency becomes an ``error`` event, not a 500."""
+    refusal = intent.check(body.question)
+    if refusal is not None:  # a request to change data never reaches the model: answer at once
+        yield json.dumps({"type": "answer", "text": refusal.message, "steps": 0, "verified": None, "issues": [],
+                          "refused": True, "elapsed_ms": 0}) + "\n"
+        return
     try:
         from ..agent import session  # imported here: langgraph is an optional extra, and the rest of the API works without it
     except ImportError as e:

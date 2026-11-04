@@ -116,3 +116,20 @@ def test_feedback_endpoint_stores_a_rating(client, tmp_path, monkeypatch):
 def test_feedback_endpoint_validates(client):
     assert client.post("/api/feedback", json={"rating": "meh", "question": "q", "answer": "a"}).status_code == 422
     assert client.post("/api/feedback", json={"rating": "up", "question": "", "answer": "a"}).status_code == 422
+
+
+def test_agent_endpoint_refuses_a_write_request_without_starting_the_agent(client, monkeypatch):
+    from identity_mcp.agent import session
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the agent must not start for a refused request")
+
+    monkeypatch.setattr(session, "events", boom)
+    r = client.post("/api/agent", json={"question": "can you delete all admins"})
+    [event] = [__import__("json").loads(line) for line in r.text.splitlines()]
+    assert event["type"] == "answer" and event["refused"] is True and "read-only" in event["text"] and event["steps"] == 0
+
+
+def test_ask_endpoint_refuses_a_write_request(client):
+    body = client.post("/api/ask", json={"question": "Delete all terminated users."}).json()
+    assert body["refused"] is True and "read-only" in body["answer"] and "error" not in body

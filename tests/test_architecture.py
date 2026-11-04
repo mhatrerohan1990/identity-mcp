@@ -26,7 +26,7 @@ ALLOWED = {
     "context": {"core", "context"},
     "pipeline": {"core", "rag", "guardrails", "context", "pipeline"},
     "mcp_server": {"core", "context", "guardrails", "pipeline"},
-    "api": {"core", "context", "pipeline", "mcp_server", "agent", "feedback", "api"},
+    "api": {"core", "context", "guardrails", "pipeline", "mcp_server", "agent", "feedback", "api"},
     "feedback": {"core", "rag", "guardrails", "pipeline", "feedback"},
     "agent": {"core"},
 }

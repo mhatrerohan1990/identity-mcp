@@ -22,6 +22,8 @@ The MCP app is mounted last at `/`, so FastAPI's own routes win.
 
 ### `POST /api/agent` (`agent_routes.py`)
 
+A request to change data ("delete all admins") is refused first: the stream is one `answer` event with `refused: true` and the read-only message, with no model call.
+
 Body: `{"question": "...", "history": [{"question": "...", "answer": "..."}]}`. Question 1 to 1000 chars; at most 6 history turns
 accepted, the last 3 used; extra fields on a turn (rows, columns) are ignored so the page can send one history array to both
 endpoints. Response: `application/x-ndjson`, one event per line, ending with `answer` or `error`. See

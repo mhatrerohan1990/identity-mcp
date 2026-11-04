@@ -79,5 +79,8 @@ would have hidden the interesting problem.
 
 ## How it fails
 
+A request to change data ("delete all admins") comes back as `{"refused": true, "error": "This assistant is read-only, ..."}` before any model runs, so a client can relay it.
+
+
 An invalid or out-of-scope query returns `error` with the reasons (after the pipeline's own repairs). The server itself does not
 crash on bad input; arguments are validated by the MCP SDK from the tool's type hints.

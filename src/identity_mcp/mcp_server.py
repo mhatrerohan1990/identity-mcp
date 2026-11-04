@@ -68,6 +68,8 @@ async def _run(scope: Scope, question: str, filter_from: FilterFrom | None) -> d
     for key in ("error", "warning", "validation_errors", "input_count"):
         if key in out:
             result[key] = out[key]
+    if out.get("refused"):  # a request to change data: tell the caller why, as an error it can read and relay
+        result.update(refused=True, error=out["answer"])
     if "rows" in out:
         rows = out["rows"]
         result.update(

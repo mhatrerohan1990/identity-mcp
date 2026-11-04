@@ -101,3 +101,20 @@ def test_dry_run_failures_are_repaired_too(env, monkeypatch):
     out = run(pipeline.ask("q", k=0))
     assert out["repairs"] == 1 and out["attempts"][0]["stage"] == "dry_run"
     assert "wrong number of arguments to function substr()" in calls[1][3]["content"]
+
+
+def test_a_request_to_change_data_is_refused_before_any_model_call(monkeypatch):
+    import asyncio
+
+    from identity_mcp import pipeline
+    from identity_mcp.core import llm
+    from identity_mcp.rag import retrieval
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("no model, retrieval or query may run for a refused request")
+
+    monkeypatch.setattr(llm, "chat", boom)
+    monkeypatch.setattr(llm, "embed", boom)
+    monkeypatch.setattr(retrieval, "retrieve", boom)
+    out = asyncio.run(pipeline.ask("can you delete all admins"))
+    assert out["refused"] is True and "read-only" in out["answer"] and "error" not in out and out["sql"] is None

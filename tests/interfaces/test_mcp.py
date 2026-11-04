@@ -115,3 +115,12 @@ def test_chat_page_and_ask_endpoint(db, monkeypatch):
     r = client.post("/api/ask", json={"question": "  how many groups?  "})
     assert r.status_code == 200 and r.json()["answer"] == "12 groups." and r.json()["rows"] == [[12]]
     assert client.post("/api/ask", json={"question": ""}).status_code == 422
+
+
+def test_mcp_tool_refuses_a_request_to_change_data(db, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise AssertionError("the model must not be used")
+    monkeypatch.setattr(llm, "chat", boom)
+    monkeypatch.setattr(llm, "embed", boom)
+    result = run(mcp_server.query_identity("delete all admins"))
+    assert result["refused"] is True and "read-only" in result["error"] and "rows" not in result
