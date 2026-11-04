@@ -41,6 +41,10 @@
   .step b { color: var(--text); font-weight: 600; }
   .step.bad { color: var(--err); }
   #mode { margin-left: auto; font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
+  .rate { margin-top: 6px; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .rate button { font: inherit; font-size: 14px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; }
+  .rate button:hover:not(:disabled) { border-color: var(--accent); }
+  .rate button:disabled { opacity: .5; cursor: default; }
   .meta { margin-top: 6px; font-size: 12px; color: var(--muted); }
   .typing { color: var(--muted); font-style: italic; }
   #newchat { font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
@@ -127,6 +131,8 @@ function addBot(data) {
     m.append(el("div", "meta", `${(total / 1000).toFixed(1)}s total · ${parts.join(" · ")}`));
   }
   chat.append(m); scroll();
+  if (!failed && data.answer) addRating(m, { question: data.question || "", answer: data.answer, mode: "single", verified: null,
+    steps: data.sql ? [{ tool: "sql", question: data.standalone_question || data.question || "", sql: data.sql, linked: false, error: "" }] : [] });
 }
 
 const SCOPE = { query_identity: "identity", query_activity: "activity" };
@@ -151,10 +157,28 @@ function addStep(m, ev) {
   else if (ev.type === "nudge") m.steps.append(el("div", "step", "(the model wrote text instead of calling a tool; asked to try again)"));
 }
 
+// Thumbs under an answer. `steps` are the queries behind it ({tool, question, sql, linked, error}); they are what a reviewer
+// may later promote into the question bank (thumbs up) or turn into an eval case (thumbs down). Nothing is promoted automatically.
+function addRating(m, info) {
+  const row = el("div", "rate"), up = el("button", null, "\u{1F44D}"), down = el("button", null, "\u{1F44E}"), note = el("span");
+  up.title = "Good answer"; down.title = "Wrong or unhelpful";
+  const send = async (rating) => {
+    const comment = rating === "down" ? (window.prompt("What was wrong? (optional)") || "") : "";
+    up.disabled = down.disabled = true;
+    try {
+      const r = await fetch("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rating, comment, ...info }) });
+      note.textContent = r.ok ? "Thanks, saved." : `Could not save (${r.status}).`;
+    } catch (e) { note.textContent = "Could not save."; }
+  };
+  up.addEventListener("click", () => send("up")); down.addEventListener("click", () => send("down"));
+  row.append(up, down, note); m.append(row);
+}
+
 async function askAgent(question) {
   const m = el("div", "msg bot"), box = el("div", "bubble"), status = el("div", "typing", "Thinking\u2026");
   m.steps = el("div", "steps"); box.append(m.steps, status); m.append(box); chat.append(m); scroll();
   let answer = null, failed = null;
+  const steps = [];  // for feedback: one entry per tool call, completed by its result
   const r = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, history: history.filter(t => t.answer).slice(-HISTORY_SENT) }) });
   if (!r.ok) throw new Error(`Server returned ${r.status}`);
   const reader = r.body.getReader(), decoder = new TextDecoder();
@@ -162,6 +186,8 @@ async function askAgent(question) {
   const handle = line => {
     if (!line.trim()) return;
     const ev = JSON.parse(line);
+    if (ev.type === "tool_call") steps.push({ tool: ev.name, question: ev.question, sql: "", linked: !!ev.filter_from, error: "" });
+    else if (ev.type === "tool_result" && steps.length) Object.assign(steps[steps.length - 1], { sql: ev.sql || "", error: ev.error || "" });
     if (ev.type === "answer") answer = ev; else if (ev.type === "error") failed = ev.message; else addStep(m, ev);
     scroll();
   };
@@ -180,6 +206,7 @@ async function askAgent(question) {
   box.replaceWith(d); d.append(m.steps);
   m.append(el("div", "meta", `${(answer.elapsed_ms / 1000).toFixed(1)}s \u00b7 ${answer.steps} model call${answer.steps === 1 ? "" : "s"}` + (answer.verified === true ? " \u00b7 \u2713 checked against the results" : answer.verified === false ? " \u00b7 \u26a0 not fully verified" : "")));
   history.push({ question, answer: answer.text });
+  addRating(m, { question, answer: answer.text, mode: "agent", verified: answer.verified, steps });
 }
 
 async function ask(question) {

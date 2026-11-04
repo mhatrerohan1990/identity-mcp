@@ -11,3 +11,4 @@ meta.db
 
 # eval runs (commit a baseline explicitly with --out evals/baseline.json)
 evals/results/
+feedback.db

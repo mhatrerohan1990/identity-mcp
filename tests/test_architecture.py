@@ -4,6 +4,7 @@
     pipeline                                may use rag, guardrails, context, core
     rag, guardrails, context                may use core (and themselves)
     core                                    uses nothing else in the package
+    feedback                                may use pipeline, guardrails, rag, core (like an interface)
     agent                                   talks to the server over MCP only; imports nothing but core
 
 The rules are checked on the real imports, so a shortcut (say, ``guardrails`` importing ``pipeline``) fails this test
@@ -25,7 +26,8 @@ ALLOWED = {
     "context": {"core", "context"},
     "pipeline": {"core", "rag", "guardrails", "context", "pipeline"},
     "mcp_server": {"core", "context", "guardrails", "pipeline"},
-    "api": {"core", "context", "pipeline", "mcp_server", "agent", "api"},
+    "api": {"core", "context", "pipeline", "mcp_server", "agent", "feedback", "api"},
+    "feedback": {"core", "rag", "guardrails", "pipeline", "feedback"},
     "agent": {"core"},
 }
 

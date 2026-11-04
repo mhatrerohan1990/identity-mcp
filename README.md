@@ -24,6 +24,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
 | Eval suite (`evals/`): 93 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
 | Multi-turn: follow-ups ("the newer one", "what can he access?") rewritten into standalone questions (`conversation.py`) | done, stateless |
+| Feedback loop: thumbs on answers, reviewed promotion into the bank and eval set (`feedback/`) | done, review by command line |
 | Chat UI (static page; `POST /api/agent` streams the agent, `POST /api/ask` is the single-shot pipeline) | done, basic |
 | Feedback loop, per-table tools | planned |
 
@@ -209,6 +210,28 @@ Johnson, and the answer merges their groups; every word of it is in the data, so
 is a separate fix.
 
 Not done: agent eval cases, and saved chats.
+
+## Feedback loop
+
+Every answer in the chat page has a thumbs up and a thumbs down (thumbs down asks "what was wrong?"). The rating is stored with the
+question, the answer, whether it passed verification, and the SQL behind it (`POST /api/feedback`, kept in `feedback.db`, a separate
+file; the identity database is still read-only). A person then reviews the pile:
+
+```sh
+uv run python -m identity_mcp.feedback --stats      # how much is waiting
+uv run python -m identity_mcp.feedback              # review one item at a time (--only up | --only down)
+```
+
+- **Thumbs up -> question bank.** Each step of the answer that qualifies is shown with its SQL and row count; `a` appends it to
+  `examples/examples.md` as the next `ex-NNN`, tagged `feedback`. The retriever picks it up on the next run (embeddings are cached by text).
+- **Thumbs down -> eval case.** A complaint is only a test once someone knows the right answer, so `g` asks you to type the correct SQL.
+  It is validated and run, then added to `evals/cases.json` as `f-NN` and counts in every later eval run.
+
+Nothing is promoted automatically, because a bank that any click can write to is a way to teach the model wrong answers. Each promotion
+is shown to a reviewer, re-validated and re-run against the current data, and refused if the question is already in the bank or eval set.
+A step is also refused if it read an earlier step's result (`filter_from`; it only makes sense together with that step), ended in an
+error, or fails the scope rules. The review command is `feedback/__main__.py`, the checks and file writers are `feedback/promote.py`,
+and the table is `feedback/store.py`.
 
 ## Validation
 
@@ -498,6 +521,8 @@ src/identity_mcp/
 ├── mcp_server.py  the two MCP tools                                                interface
 ├── api/           app.py (chat page, /api/ask, mounts MCP), agent_routes.py         interface
 │                  (/api/agent, streamed), routes.py (REST), static/
+├── feedback/      store.py (feedback.db), promote.py (checks; bank and eval writers),   interface
+│                  __main__.py (review command)
 └── agent/         tools.py (MCP bridge), graph.py (LangGraph loop), prompts.py,     interface, talks to the server over MCP only
                    recovery.py, trace.py (step events), session.py (streamed run),
                    __main__.py (command line)

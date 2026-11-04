@@ -98,3 +98,21 @@ def test_agent_endpoint_streams_ndjson(client, monkeypatch):
 def test_agent_endpoint_validates_the_body(client):
     assert client.post("/api/agent", json={"question": ""}).status_code == 422
     assert client.post("/api/agent", json={"question": "x", "history": [{"question": "a", "answer": None}]}).status_code == 422
+
+
+def test_feedback_endpoint_stores_a_rating(client, tmp_path, monkeypatch):
+    from identity_mcp.feedback import store
+    monkeypatch.setenv("IDENTITY_MCP_FEEDBACK_DB", str(tmp_path / "fb.db"))
+    body = {"rating": "up", "question": "q", "answer": "a", "mode": "agent", "verified": True,
+            "steps": [{"tool": "query_identity", "question": "q", "sql": "SELECT 1"}]}
+    r = client.post("/api/feedback", json=body)
+    assert r.status_code == 201
+    con = store.connect()
+    [item] = store.pending(con)
+    con.close()
+    assert item.id == r.json()["id"] and item.rating == store.UP and item.steps[0].sql == "SELECT 1"
+
+
+def test_feedback_endpoint_validates(client):
+    assert client.post("/api/feedback", json={"rating": "meh", "question": "q", "answer": "a"}).status_code == 422
+    assert client.post("/api/feedback", json={"rating": "up", "question": "", "answer": "a"}).status_code == 422

@@ -17,6 +17,7 @@ from ..context.conversation import Turn
 from ..core.logs import configure
 from ..mcp_server import mcp
 from .agent_routes import router as agent_router
+from .feedback_routes import router as feedback_router
 from .routes import ALL
 
 STATIC = Path(__file__).parent / "static"
@@ -71,6 +72,7 @@ def chat_page():
 
 
 app.include_router(agent_router)
+app.include_router(feedback_router)
 for router in ALL:
     app.include_router(router)
 
