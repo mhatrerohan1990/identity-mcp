@@ -6,6 +6,7 @@ import pytest
 from identity_mcp.core import llm
 from identity_mcp import pipeline
 from identity_mcp.data import seed
+from identity_mcp.pipeline import engine
 
 run = asyncio.run
 BAD = "SELECT i.integration, COUNT(*) FROM entitlements i GROUP BY i.integration"
@@ -31,7 +32,7 @@ def scripted(sqls, calls):
 def test_invalid_query_is_repaired_then_executed(env, monkeypatch):
     calls, executed = [], []
     real_execute = pipeline.execute
-    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: (executed.append(sql), real_execute(sql, *a))[1])
+    monkeypatch.setattr(engine, "execute", lambda sql, *a: (executed.append(sql), real_execute(sql, *a))[1])
     monkeypatch.setattr(llm, "chat", scripted([BAD, GOOD], calls))
     out = run(pipeline.ask("apps per integration", k=0))
 

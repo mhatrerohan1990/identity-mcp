@@ -9,6 +9,7 @@ from identity_mcp.core import llm
 from identity_mcp import pipeline
 from identity_mcp.guardrails import validation
 from identity_mcp.data import seed
+from identity_mcp.pipeline import engine
 
 run = asyncio.run
 
@@ -111,7 +112,7 @@ def test_invalid_sql_is_not_executed_and_user_gets_reasons(env, monkeypatch, cap
         return '{"sql": "SELECT i.integration FROM entitlements i"}'
 
     monkeypatch.setattr(llm, "chat", chat)
-    monkeypatch.setattr(pipeline, "execute", lambda sql, *a: executed.append(sql))
+    monkeypatch.setattr(engine, "execute", lambda sql, *a: executed.append(sql))
     monkeypatch.setenv("IDENTITY_MCP_MAX_REPAIRS", "0")  # this test is about the no-retry path
     caplog.set_level(logging.INFO, logger="identity_mcp")
     out = run(pipeline.ask("apps per integration", k=0))

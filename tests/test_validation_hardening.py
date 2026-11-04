@@ -7,6 +7,7 @@ import pytest
 from identity_mcp import pipeline
 from identity_mcp.guardrails import validation
 from identity_mcp.data import seed
+from identity_mcp.pipeline import executor
 
 
 @pytest.fixture(scope="module")
@@ -159,7 +160,7 @@ def test_execute_refuses_unvalidated_sql(env):
 
 
 def test_timeouts_are_explained(env, monkeypatch):
-    monkeypatch.setattr(pipeline, "QUERY_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(executor, "QUERY_TIMEOUT_S", 0.3)
     sql = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c"
     with pytest.raises(pipeline.QueryError, match="ran longer than 0.3 seconds"):
         pipeline.execute(sql)
@@ -169,7 +170,7 @@ def test_ask_reports_runtime_failures_in_plain_language(env, monkeypatch):
     import asyncio
     from identity_mcp.core import llm
 
-    monkeypatch.setattr(pipeline, "QUERY_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(executor, "QUERY_TIMEOUT_S", 0.3)
     slow = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT COUNT(*) FROM c"
 
     async def chat(messages, *, schema=None, timeout=120):
