@@ -184,7 +184,7 @@ correct.
 
 ## Multi-turn conversations
 
-`src/identity_mcp/conversation.py`. A follow-up like "the newer one" cannot be answered alone. Before the pipeline starts, an
+`src/identity_mcp/context/conversation.py`. A follow-up like "the newer one" cannot be answered alone. Before the pipeline starts, an
 extra model call rewrites it into a standalone question using the earlier turns:
 
 ```
@@ -213,7 +213,7 @@ Limits: three turns of memory, so an entity from long ago is forgotten; and save
 
 ## Value grounding
 
-`src/identity_mcp/grounding.py`. Validation proves a query is well-formed; this layer checks that the *values* it
+`src/identity_mcp/guardrails/grounding.py`. Validation proves a query is well-formed; this layer checks that the *values* it
 filters on exist. `WHERE department = 'Eng'` is valid SQL that quietly returns nothing, because the department is
 `'Engineering'`.
 
@@ -410,11 +410,24 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ## Layout
 
 ```
-src/identity_mcp/data/   schema.sql, seed.py
-src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask; wires the layers together), conversation.py (follow-up rewriting), retrieval.py (RAG over the bank, embeddings), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
-examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
-evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
-tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests
+src/identity_mcp/
+├── core/          db.py (read-only SQLite), llm.py (Ollama client), logs.py       infrastructure, imports nothing above it
+├── data/          schema.sql, seed.py                                              the demo dataset
+├── rag/           bank.py (question bank), retrieval.py (embedding search)         few-shot examples
+├── guardrails/    scopes.py (tool table limits), validation.py, grounding.py       what may run
+├── context/       conversation.py (follow-ups), handoff.py (ids between tools)     what the pipeline knows besides the question
+├── pipeline/      engine.py (ask), prompts.py, sql.py (write/check/repair),        the flow for one question
+│                  executor.py (run safely), answer.py (summary)
+├── mcp_server.py  the two MCP tools                                                interface
+├── api/           app.py (chat page, /api/ask, mounts MCP), routes.py, static/     interface
+└── agent/         (next) our LangGraph client of the MCP server                    interface, talks to the server over MCP only
+examples/examples.md  104 question -> expected SQL pairs (verified by tests/rag/test_examples.py)
+evals/                eval suite: cases.json, runner (python -m evals.run), grading, baselines
+tests/                mirrors the package: core is covered through the others, then rag/, guardrails/, context/, pipeline/,
+                      interfaces/, data/, evals/; test_architecture.py enforces the layer rules below
 docs/DESIGN.md
 ```
+
+**Layer rules** (checked by `tests/test_architecture.py` on the real imports): dependencies point down only. `core` imports nothing
+else in the package; `rag`, `guardrails` and `context` use only `core`; `pipeline` uses those four; the interfaces use `pipeline` and below.
+`guardrails` never imports `pipeline`, and `agent` never imports server code at all.

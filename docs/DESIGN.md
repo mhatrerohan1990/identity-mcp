@@ -40,7 +40,7 @@ if we need durable checkpointed state, human approval before execution, or branc
 
 ## Components
 - **Dataset**: `src/identity_mcp/data/schema.sql` and `seed.py`. Deterministic; planted findings
-  (orphaned access, dormant admins, privileged users without MFA) are asserted in `tests/test_seed.py`.
+  (orphaned access, dormant admins, privileged users without MFA) are asserted in `tests/data/test_seed.py`.
 - **Example bank**: `examples/examples.md`, ~100-150 curated pairs (id, question, tags, SQL, notes).
   Source of truth; embeddings are cached keyed by file hash.
 - **Retrieval**: local `fastembed` embeddings + cosine in numpy, fused with BM25 (domain words like
