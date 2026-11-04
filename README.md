@@ -200,11 +200,40 @@ The tests use a fake LLM and do not need Ollama.
 
 ## Evals
 
+### How to run them
+
+```sh
+# 1. one-time setup (skip what you already did under "Run it")
+uv sync
+uv run python -m identity_mcp.data.seed          # creates ./app.db
+ollama pull llama3.1:8b && ollama pull nomic-embed-text
+
+# 2. make sure Ollama is up (this should print JSON, not an error)
+curl -s localhost:11434/api/tags
+
+# 3. smoke test: 4 cases, about 30 seconds, writes nothing
+uv run python -m evals.run --case p-058 n-01 s-01 s-05 --out ''
+
+# 4. the full suite: 83 cases x 2 configs (no examples vs 4 examples), about 17 minutes
+uv run python -m evals.run --out evals/results/my-run.json
 ```
-uv run python -m evals.run                         # k=0 vs k=4, repair loop on (about 17 min on a laptop)
-uv run python -m evals.run --k 4 --repairs 0 2     # does the repair loop help?
-uv run python -m evals.run --kind paraphrase --limit 10 --out ''
+
+Run everything from the repo root. The terminal shows one line per case as it finishes, then a comparison table,
+then the cases whose outcome differs between configs. `Ctrl-C` stops early and still prints the table for what finished.
+Other useful runs:
+
+```sh
+uv run python -m evals.run --k 4 --repairs 0 2          # does the repair loop help?
+uv run python -m evals.run --k 0 2 4 8                  # how many examples is best?
+uv run python -m evals.run --kind paraphrase --limit 10 # a quick slice (kinds: paraphrase, novel, safety)
+uv run python -m evals.run --case p-058 --verbose       # one case with the full flow and prompt logs
 ```
+
+To check a change (prompt, retrieval, validation, model via `IDENTITY_MCP_LLM_MODEL`), run the suite before and after
+with different `--out` files and compare the tables. Results come from one run of a small model per case, so treat a
+difference of one or two cases as noise. `uv run pytest` covers the eval plumbing (case file, grading) without Ollama.
+
+### What is measured
 
 Needs Ollama and a seeded `app.db`; run from the repo root. Cases live in `evals/cases.json`:
 
