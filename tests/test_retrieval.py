@@ -10,7 +10,7 @@ run = asyncio.run
 
 def test_loader_parses_the_whole_bank():
     examples = bank.load()
-    assert len(examples) == 100 and examples[0].id == "ex-001"
+    assert len(examples) == 104 and examples[0].id == "ex-001"
     assert any(e.notes for e in examples) and all(e.sql and e.question for e in examples)
 
 
@@ -39,13 +39,13 @@ def test_embeddings_are_cached_on_disk(monkeypatch):
 
     monkeypatch.setattr(llm, "embed", counting)
     run(retrieval.retrieve("how many users", k=1))
-    assert calls == [100, 1]  # 100 bank questions embedded once, plus the query
+    assert calls == [104, 1]  # 104 bank questions embedded once, plus the query
     monkeypatch.setattr(retrieval, "_index", None)  # a fresh process: only the disk cache remains
     calls.clear()
     run(retrieval.retrieve("how many groups", k=1))
     assert calls == [1]
     cache = json.loads(retrieval._cache_file().read_text())
-    assert len(cache) == 100
+    assert len(cache) == 104
 
 
 def test_prompt_includes_examples_best_last_with_notes():

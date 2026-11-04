@@ -30,11 +30,11 @@ def con(tmp_path_factory):
     con.close()
 
 
-def test_bank_has_100_well_formed_entries():
-    assert BANK.read_text().count("\n## ex-") == len(ENTRIES) == 100  # the regex dropped nothing
-    assert [e["id"] for e in ENTRIES] == [f"ex-{i:03d}" for i in range(1, 101)]
-    assert len({e["q"].lower() for e in ENTRIES}) == 100, "duplicate questions"
-    assert len({re.sub(r"\s+", " ", e["sql"]) for e in ENTRIES}) == 100, "duplicate queries"
+def test_bank_has_104_well_formed_entries():
+    assert BANK.read_text().count("\n## ex-") == len(ENTRIES) == 104  # the regex dropped nothing
+    assert [e["id"] for e in ENTRIES] == [f"ex-{i:03d}" for i in range(1, 105)]
+    assert len({e["q"].lower() for e in ENTRIES}) == 104, "duplicate questions"
+    assert len({re.sub(r"\s+", " ", e["sql"]) for e in ENTRIES}) == 104, "duplicate queries"
 
 
 @pytest.mark.parametrize("e", ENTRIES, ids=lambda e: e["id"])

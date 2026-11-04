@@ -37,7 +37,7 @@ def test_flow_and_full_prompts_are_logged(env, caplog):
     by_step = {step: flow[i] for step, i in zip(steps, positions)}
     assert "ex-0" in by_step["retrieved 2 example(s)"] and "SELECT COUNT(*) FROM users" in by_step["generated sql"]
     assert "1 row(s)" in by_step["executed in"]
-    assert any(m.startswith("embedding 100 of 100") for m in flow)  # cold cache: bank embedded on first use
+    assert any(m.startswith("embedding 104 of 104") for m in flow)  # cold cache: bank embedded on first use
 
     prompts = [r.getMessage() for r in caplog.records if r.name == "identity_mcp.prompt"]
     assert len(prompts) == 4  # request + response for the SQL call, request + response for the summary call

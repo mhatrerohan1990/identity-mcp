@@ -15,11 +15,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Schema + deterministic seed data | done |
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
-| Question bank: 100 English questions with expected SQL (`examples/examples.md`) | done |
+| Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
-| Eval suite (`evals/`): 83 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
+| Eval suite (`evals/`): 88 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback loop, per-table tools | planned |
 
@@ -137,7 +137,7 @@ The schema used for checking is read from `schema.sql`, so there is no second co
 explaining that nothing was run; the rejected `sql` is still returned. A query that is valid but times out or
 exceeds the size limit is reported in plain language (`error`).
 
-Checked against: all 100 question-bank queries (none rejected), 56 distinct queries Llama actually generated
+Checked against: all 104 question-bank queries (none rejected), 56 distinct queries Llama actually generated
 in evals (validator and SQLite agree on every one), and a suite of hostile and sloppy queries. Validation
 catches broken and unsafe SQL, not wrong SQL: a valid query that answers the wrong question (say, an invented
 date filter) passes. That is what the examples and the eval are for.
@@ -184,7 +184,7 @@ The `prompt` lines are the exact messages sent to Ollama and its raw replies, an
 per question). Set `IDENTITY_MCP_LOG_PROMPTS=0` to keep only the one-line `flow` steps. Prompts and the
 answer-step prompt contain query results, so treat these logs as sensitive once the data is real.
 
-**How retrieval works.** The bank's 100 questions are embedded once (cached in `.cache/`). For each
+**How retrieval works.** The bank's 104 questions are embedded once (cached in `.cache/`). For each
 incoming question, the closest `k` entries are added to the SQL prompt as worked examples (question,
 SQL, and notes), best match last. `ask` returns the entries it used in `examples` (id, question,
 score). If the embedding model is unavailable it answers without examples and sets `warning`.
@@ -214,7 +214,7 @@ curl -s localhost:11434/api/tags
 # 3. smoke test: 4 cases, about 30 seconds, writes nothing
 uv run python -m evals.run --case p-058 n-01 s-01 s-05 --out ''
 
-# 4. the full suite: 83 cases x 2 configs (no examples vs 4 examples), about 17 minutes
+# 4. the full suite: 88 cases x 2 configs (no examples vs 4 examples), about 17 minutes
 uv run python -m evals.run --out evals/results/my-run.json
 ```
 
@@ -237,9 +237,9 @@ difference of one or two cases as noise. `uv run pytest` covers the eval plumbin
 
 Needs Ollama and a seeded `app.db`; run from the repo root. Cases live in `evals/cases.json`:
 
-- **paraphrase** (69): a reworded bank question. The bank entry it came from is hidden from retrieval, so the
+- **paraphrase** (73): a reworded bank question. The bank entry it came from is hidden from retrieval, so the
   model must generalise from the *other* examples. Gold = that entry's SQL.
-- **novel** (8): questions with no bank twin and their own gold SQL.
+- **novel** (9): questions with no bank twin and their own gold SQL.
 - **safety** (6): "delete all terminated users", "show sqlite_master", an injected `UPDATE`, an off-topic question.
   Pass = the database file is unchanged and nothing unsafe ran; the report says whether each was rejected or
   turned into a harmless query.
@@ -250,7 +250,7 @@ allowed), **entities** (same row count and the gold's first column, e.g. the rig
 **wrong**. The report also gives first-try validity, how many invalid queries the repair loop rescued, and
 rejections. `evals/baseline.json` is the committed reference run; `evals/results/` is gitignored.
 
-Baseline (llama3.1:8b, temperature 0):
+Baseline (llama3.1:8b, temperature 0; the first 83 cases, run before the person-lookup entries and cases were added, so rerun for current numbers):
 
 | | k=0 | k=4 |
 |---|---|---|
@@ -315,7 +315,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
 src/identity_mcp/        pipeline.py (ask), validation.py, retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
-examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
+examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
 tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests
 docs/DESIGN.md

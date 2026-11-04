@@ -39,6 +39,8 @@ Rules:
 - Treat today as {TODAY}. Use date('{TODAY}', '-90 days') for relative dates, never date('now').
 - "Admin" access means entitlements.is_admin = 1. Access a user holds is in access_grants.
 - Select human-readable columns (names, emails) rather than only ids.
+- Add only the filters the question asks for. Do not invent conditions on status, dates, entitlements or grant type.
+- Match a person named in the question with name LIKE '%Name%' (names are not unique), and include id and email.
 Respond with JSON: {{"sql": "<the query>"}}"""
 
 EXAMPLES_INTRO = """
@@ -56,7 +58,10 @@ Write a corrected query that fixes every problem, and respond with JSON: {{"sql"
 
 ANSWER_SYSTEM = """You answer a user's question using only the query results provided.
 Be concise and concrete. Quote names and numbers exactly as they appear. List the items when there are only a few.
-If a note says the results were truncated or partial, say so. Do not mention SQL unless the user asked about it."""
+If a note says the results were truncated or partial, say so. Do not mention SQL unless the user asked about it.
+Attach each value to the column it came from (created_at is when the account was added, terminated_at is the
+termination date) and never combine or reinterpret columns. Do not guess anyone's gender: use the person's name
+or "they". If several rows share a name, say so and tell them apart by email or id."""
 
 
 def _strip_fences(sql: str) -> str:

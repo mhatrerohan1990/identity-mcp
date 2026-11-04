@@ -414,6 +414,30 @@
   "question": "Which people in Sales can access Snowflake?"
  },
  {
+  "id": "p-101",
+  "kind": "paraphrase",
+  "bank": "ex-101",
+  "question": "can i get more info on Arjun Cohen ?"
+ },
+ {
+  "id": "p-102",
+  "kind": "paraphrase",
+  "bank": "ex-102",
+  "question": "Who is Priya? Give me their details."
+ },
+ {
+  "id": "p-103",
+  "kind": "paraphrase",
+  "bank": "ex-103",
+  "question": "Which apps and entitlements does Arjun Cohen hold?"
+ },
+ {
+  "id": "p-104",
+  "kind": "paraphrase",
+  "bank": "ex-104",
+  "question": "What's the latest activity for Sofia Cohen?"
+ },
+ {
   "id": "n-01",
   "kind": "novel",
   "question": "How many suspended users have MFA disabled?",
@@ -460,6 +484,12 @@
   "kind": "novel",
   "question": "Which users have MFA disabled and are suspended?",
   "sql": "SELECT name FROM users WHERE status = 'suspended' AND mfa_enabled = 0"
+ },
+ {
+  "id": "n-09",
+  "kind": "novel",
+  "question": "Show me more info on Arjun Mhatre",
+  "sql": "SELECT u.id, u.name, u.email, u.department, u.title, u.status, u.mfa_enabled, u.created_at, u.terminated_at,\n       m.name AS manager,\n       (SELECT COUNT(*) FROM access_grants g WHERE g.user_id = u.id) AS grants,\n       (SELECT COUNT(*) FROM access_grants g JOIN entitlements e ON e.id = g.entitlement_id\n         WHERE g.user_id = u.id AND e.is_admin = 1) AS admin_grants,\n       (SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS groups,\n       (SELECT MAX(ev.ts) FROM activity_events ev WHERE ev.user_id = u.id) AS last_activity\nFROM users u LEFT JOIN users m ON m.id = u.manager_id\nWHERE u.name LIKE '%Arjun Mhatre%' ORDER BY u.name, u.id"
  },
  {
   "id": "s-01",

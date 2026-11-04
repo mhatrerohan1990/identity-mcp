@@ -1,6 +1,6 @@
 # Question bank
 
-100 curated English questions, each with the SQLite query we expect to be generated for it.
+104 curated English questions, each with the SQLite query we expect to be generated for it.
 Source of truth for the future few-shot retrieval step; nothing reads this file yet.
 
 Conventions the queries follow (and that a generator should learn):
@@ -10,6 +10,7 @@ Conventions the queries follow (and that a generator should learn):
 - Questions about people return one row per user: use `EXISTS` / `GROUP BY` rather than a join that repeats a row per grant.
 - Access counts BOTH direct and group-inherited grants unless the question names one (`granted_via`).
 - Return readable columns (names, emails), not just ids.
+- People named in a question are matched with `name LIKE '%Name%'` (names repeat), returning id and email; no invented filters.
 - Tag `empty-ok` marks questions whose correct answer in the demo data is zero rows.
 
 Entry format (parsed by `tests/test_examples.py`): `## ex-NNN`, `**Q:**`, `**Tags:**`, a ```sql block, optional `**Notes:**`.
@@ -1050,4 +1051,61 @@ SELECT DISTINCT u.name, u.email, e.name AS entitlement
 FROM access_grants g JOIN users u ON u.id = g.user_id JOIN entitlements e ON e.id = g.entitlement_id
 JOIN applications a ON a.id = e.app_id
 WHERE a.name = 'Snowflake' AND u.department = 'Sales' AND u.status = 'active' ORDER BY u.name
+```
+
+## ex-101
+**Q:** Show me more info on Arjun Cohen.
+**Tags:** users, profile, name-lookup
+
+```sql
+SELECT u.id, u.name, u.email, u.department, u.title, u.status, u.mfa_enabled, u.created_at, u.terminated_at,
+       m.name AS manager,
+       (SELECT COUNT(*) FROM access_grants g WHERE g.user_id = u.id) AS grants,
+       (SELECT COUNT(*) FROM access_grants g JOIN entitlements e ON e.id = g.entitlement_id
+         WHERE g.user_id = u.id AND e.is_admin = 1) AS admin_grants,
+       (SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS groups,
+       (SELECT MAX(ev.ts) FROM activity_events ev WHERE ev.user_id = u.id) AS last_activity
+FROM users u LEFT JOIN users m ON m.id = u.manager_id
+WHERE u.name LIKE '%Arjun Cohen%' ORDER BY u.name, u.id
+```
+
+**Notes:** "Tell me about / more info on <person>" is a profile lookup. Match the name with LIKE, return id and email because several people share a name, and add no filters the question did not ask for (no status, dates or entitlements).
+
+## ex-102
+**Q:** Tell me about Priya.
+**Tags:** users, profile, name-lookup
+
+```sql
+SELECT u.id, u.name, u.email, u.department, u.title, u.status, u.mfa_enabled, u.created_at, u.terminated_at,
+       m.name AS manager,
+       (SELECT COUNT(*) FROM access_grants g WHERE g.user_id = u.id) AS grants,
+       (SELECT COUNT(*) FROM access_grants g JOIN entitlements e ON e.id = g.entitlement_id
+         WHERE g.user_id = u.id AND e.is_admin = 1) AS admin_grants,
+       (SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS groups,
+       (SELECT MAX(ev.ts) FROM activity_events ev WHERE ev.user_id = u.id) AS last_activity
+FROM users u LEFT JOIN users m ON m.id = u.manager_id
+WHERE u.name LIKE '%Priya%' ORDER BY u.name, u.id
+```
+
+**Notes:** A first name alone is enough: LIKE '%Priya%' returns everyone with that name, and the id and email tell them apart.
+
+## ex-103
+**Q:** What access does Arjun Cohen have?
+**Tags:** access_grants, name-lookup
+
+```sql
+SELECT u.id, u.name, u.email, a.name AS application, e.name AS entitlement, e.is_admin, g.granted_via, g.granted_at
+FROM users u JOIN access_grants g ON g.user_id = u.id JOIN entitlements e ON e.id = g.entitlement_id
+JOIN applications a ON a.id = e.app_id
+WHERE u.name LIKE '%Arjun Cohen%' ORDER BY u.id, a.name, e.name
+```
+
+## ex-104
+**Q:** When was Sofia Cohen last active?
+**Tags:** activity, name-lookup
+
+```sql
+SELECT u.id, u.name, u.email, MAX(ev.ts) AS last_activity
+FROM users u LEFT JOIN activity_events ev ON ev.user_id = u.id
+WHERE u.name LIKE '%Sofia Cohen%' GROUP BY u.id ORDER BY u.id
 ```
