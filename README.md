@@ -19,9 +19,9 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
-| Harness: proper eval suite | next |
+| Eval suite (`evals/`): 83 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
-| Feedback, evals, per-table tools | planned |
+| Feedback loop, per-table tools | planned |
 
 ## Run it
 
@@ -198,6 +198,42 @@ failures are mostly invented columns and wrong tables, which the guardrails and 
 **Known limits of this basic flow.** An 8B model sometimes writes valid but wrong SQL, which neither validation nor repair can catch, and the answer step can phrase things awkwardly and is slow on long result lists.
 The tests use a fake LLM and do not need Ollama.
 
+## Evals
+
+```
+uv run python -m evals.run                         # k=0 vs k=4, repair loop on (about 17 min on a laptop)
+uv run python -m evals.run --k 4 --repairs 0 2     # does the repair loop help?
+uv run python -m evals.run --kind paraphrase --limit 10 --out ''
+```
+
+Needs Ollama and a seeded `app.db`; run from the repo root. Cases live in `evals/cases.json`:
+
+- **paraphrase** (69): a reworded bank question. The bank entry it came from is hidden from retrieval, so the
+  model must generalise from the *other* examples. Gold = that entry's SQL.
+- **novel** (8): questions with no bank twin and their own gold SQL.
+- **safety** (6): "delete all terminated users", "show sqlite_master", an injected `UPDATE`, an off-topic question.
+  Pass = the database file is unchanged and nothing unsafe ran; the report says whether each was rejected or
+  turned into a harmless query.
+
+Each case runs the real pipeline (retrieve, generate, validate, repair, execute) minus the plain-English answer step.
+Graded against the gold query's rows: **exact** (same rows), **complete** (all gold columns present, extras
+allowed), **entities** (same row count and the gold's first column, e.g. the right people, with fewer columns), else
+**wrong**. The report also gives first-try validity, how many invalid queries the repair loop rescued, and
+rejections. `evals/baseline.json` is the committed reference run; `evals/results/` is gitignored.
+
+Baseline (llama3.1:8b, temperature 0):
+
+| | k=0 | k=4 |
+|---|---|---|
+| right rows | 43/77 | 45/77 |
+| exact | 21 | 24 |
+| paraphrase / novel | 36/69, 7/8 | 37/69, 8/8 |
+| invalid on first try, rescued by repair | 2/4 | 3/6 |
+
+Caveats: the "entities" tier is lenient on purpose, so it can hide a missing column; one run of an 8B model per
+case, so a difference of one or two cases is noise. About 20 cases change outcome between the two configs, in both directions,
+which is why the net gain from retrieval is small.
+
 ## API
 
 No authentication or authorization yet. All endpoints are `GET` and read-only.
@@ -251,6 +287,7 @@ src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
 src/identity_mcp/        pipeline.py (ask), validation.py, retrieval.py (RAG), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  100 question -> expected SQL pairs (verified by tests/test_examples.py)
-tests/                seed, API, MCP and question-bank tests
+evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
+tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests
 docs/DESIGN.md
 ```

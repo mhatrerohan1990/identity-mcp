@@ -8,3 +8,6 @@ app.db
 meta.db
 # cached example embeddings
 .cache/
+
+# eval runs (commit a baseline explicitly with --out evals/baseline.json)
+evals/results/

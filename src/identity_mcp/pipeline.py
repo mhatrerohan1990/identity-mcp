@@ -15,12 +15,13 @@ import os
 import sqlite3
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from . import llm, retrieval
 from .db import SCHEMA_SQL
 from .logs import configure, flow, new_request_id, one_line
-from .validation import MAX_VALUE_BYTES, ValidationError, connect_query, normalize, validate, validate_static
+from .validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
 
 TODAY = "2026-11-01"  # matches the seed data
 MAX_ROWS = 200  # rows returned to the caller
@@ -165,6 +166,57 @@ async def summarize(question: str, sql: str, result: dict[str, Any]) -> str:
     return (await llm.chat([{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": user}])).strip()
 
 
+@dataclass
+class Draft:
+    """The outcome of generating SQL and validating/repairing it. `check.ok` says whether `sql` may be executed."""
+
+    sql: str
+    check: Validation
+    attempts: list[dict[str, Any]]
+    repairs: int
+    generate_ms: int
+    validate_ms: int
+    repair_ms: int
+
+
+async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
+    """Generate SQL, validate it, and send failures back to the model for up to `max_repairs()` retries."""
+    t = time.monotonic()
+    sql = await generate_sql(question, hits)
+    generate_ms = round((time.monotonic() - t) * 1000)
+    flow.info("generated sql in %d ms: %s", generate_ms, one_line(sql, 600))
+
+    limit = max_repairs()
+    attempts: list[dict[str, Any]] = []
+    failed: list[tuple[str, list[str]]] = []
+    validate_ms = repair_ms = repairs = 0
+    while True:
+        tv = time.monotonic()
+        check = await asyncio.to_thread(validate, sql)
+        validate_ms += round((time.monotonic() - tv) * 1000)
+        attempts.append({"sql": sql, "ok": check.ok, "stage": check.stage, "errors": check.errors})
+        if check.ok:
+            flow.info("validation passed (static + dry run) on attempt %d/%d", len(attempts), limit + 1)
+            break
+        flow.warning(
+            "validation failed at %s stage on attempt %d/%d: %s", check.stage, len(attempts), limit + 1, " | ".join(check.errors)
+        )
+        failed.append((sql, check.errors))
+        if len(failed) > limit:
+            break
+        tr = time.monotonic()
+        flow.info("repair %d/%d: asking the model to fix its query", len(failed), limit)
+        new_sql = await repair_sql(question, hits, failed)
+        repairs += 1
+        repair_ms += round((time.monotonic() - tr) * 1000)
+        flow.info("repair %d/%d produced: %s", len(failed), limit, one_line(new_sql, 600))
+        if " ".join(new_sql.split()) == " ".join(sql.split()):
+            flow.warning("the model returned the same query; not retrying further")
+            break
+        sql = new_sql
+    return Draft(sql, check, attempts, repairs, generate_ms, validate_ms, repair_ms)
+
+
 async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Answer `question` from the database. Never raises for expected failures; see the `error` key.
 
@@ -192,46 +244,15 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
             len(hits), timings["retrieve"], "; ".join(f"{h.example.id} {h.score:.3f} {h.example.question!r}" for h in hits) or "none",
         )
 
-        t = time.monotonic()
-        sql = await generate_sql(question, hits)
-        timings["generate_sql"] = round((time.monotonic() - t) * 1000)
-        flow.info("generated sql in %d ms: %s", timings["generate_sql"], one_line(sql, 600))
-
-        limit = max_repairs()
-        attempts: list[dict[str, Any]] = []
-        failed: list[tuple[str, list[str]]] = []
-        t = time.monotonic()
-        validate_ms = repair_ms = repair_calls = 0
-        while True:
-            tv = time.monotonic()
-            check = await asyncio.to_thread(validate, sql)
-            validate_ms += round((time.monotonic() - tv) * 1000)
-            attempts.append({"sql": sql, "ok": check.ok, "stage": check.stage, "errors": check.errors})
-            if check.ok:
-                flow.info("validation passed (static + dry run) on attempt %d/%d", len(attempts), limit + 1)
-                break
-            flow.warning(
-                "validation failed at %s stage on attempt %d/%d: %s", check.stage, len(attempts), limit + 1, " | ".join(check.errors)
-            )
-            failed.append((sql, check.errors))
-            if len(failed) > limit:
-                break
-            tr = time.monotonic()
-            flow.info("repair %d/%d: asking the model to fix its query", len(failed), limit)
-            new_sql = await repair_sql(question, hits, failed)
-            repair_calls += 1
-            repair_ms += round((time.monotonic() - tr) * 1000)
-            flow.info("repair %d/%d produced: %s", len(failed), limit, one_line(new_sql, 600))
-            if " ".join(new_sql.split()) == " ".join(sql.split()):
-                flow.warning("the model returned the same query; not retrying further")
-                break
-            sql = new_sql
+        draft = await produce_sql(question, hits)
+        sql, check, attempts = draft.sql, draft.check, draft.attempts
+        timings["generate_sql"] = draft.generate_ms
         out["sql"] = sql
         out["attempts"] = attempts
-        out["repairs"] = repair_calls
-        timings["validate"] = validate_ms
-        if out["repairs"]:
-            timings["repair"] = repair_ms
+        out["repairs"] = draft.repairs
+        timings["validate"] = draft.validate_ms
+        if draft.repairs:
+            timings["repair"] = draft.repair_ms
         if not check.ok:  # nothing is executed
             out["validation_errors"] = check.errors
             out["error"] = f"Query failed validation ({check.stage}): " + " ".join(check.errors)
