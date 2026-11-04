@@ -44,7 +44,7 @@ def test_flow_and_full_prompts_are_logged(env, caplog):
     sql_request, sql_response, answer_request, answer_response = prompts
     # exactly what was sent: schema, retrieved examples, then the user's question
     assert "CREATE TABLE users" in sql_request and "Worked examples" in sql_request
-    assert sql_request.rstrip().endswith("Which terminated users still have access?\n===== end LLM request model=llama3.1:8b structured=yes =====")
+    assert sql_request.rstrip().endswith(f"Which terminated users still have access?\n===== end LLM request model={llm.MODEL} structured=yes =====")
     assert "SELECT COUNT(*) FROM users WHERE status" in sql_response
     assert "Query results (1 rows)" in answer_request and "[[50]]" in answer_request
     assert "50 users are terminated." in answer_response

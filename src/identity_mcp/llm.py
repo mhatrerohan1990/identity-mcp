@@ -10,7 +10,7 @@ import httpx
 
 from .logs import block, prompt
 BASE_URL = os.environ.get("IDENTITY_MCP_LLM_URL", "http://localhost:11434")
-MODEL = os.environ.get("IDENTITY_MCP_LLM_MODEL", "llama3.1:8b")
+MODEL = os.environ.get("IDENTITY_MCP_LLM_MODEL", "qwen2.5-coder:14b")
 EMBED_MODEL = os.environ.get("IDENTITY_MCP_EMBED_MODEL", "nomic-embed-text")
 
 

@@ -14,7 +14,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 |---|---|
 | Schema + deterministic seed data | done |
 | Simple read-only REST API per entity | done |
-| MCP server with one `ask` tool (question → SQL → rows → answer, local Llama) | done, basic flow |
+| MCP server with one `ask` tool (question → SQL → rows → answer, local Qwen via Ollama) | done, basic flow |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt | done, modest gain so far (see below) |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
@@ -28,7 +28,8 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 Prerequisites:
 - [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 for you).
 - [Ollama](https://ollama.com) running locally with a model pulled, only needed for the `ask` tool:
-  `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text` (the REST API and tests do not need them).
+  `ollama pull qwen2.5-coder:14b` (about 9 GB; wants 16 GB+ of RAM) and `ollama pull nomic-embed-text`
+  (the REST API and tests do not need them). On a smaller machine use `llama3.1:8b` (see the model table under Evals).
 
 ```sh
 # 1. install dependencies into .venv
@@ -57,7 +58,7 @@ Configuration (environment variables):
 |---|---|---|
 | `IDENTITY_MCP_DB` | `./app.db` | SQLite file. Always opened read-only; if missing, REST returns `503` with the seed command |
 | `IDENTITY_MCP_LLM_URL` | `http://localhost:11434` | Ollama server |
-| `IDENTITY_MCP_LLM_MODEL` | `llama3.1:8b` | Model used for both SQL generation and answers |
+| `IDENTITY_MCP_LLM_MODEL` | `qwen2.5-coder:14b` | Ollama model used for both SQL generation and answers (e.g. `llama3.1:8b`) |
 | `IDENTITY_MCP_EMBED_MODEL` | `nomic-embed-text` | Embedding model for example retrieval |
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
 | `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
@@ -169,7 +170,7 @@ Every `ask` is logged to stderr with a request id, so you can follow one questio
 ```
 12:32:01.838 INFO  [d15e10d7] flow   | ask start ... question='Which active admins have had no activity ...'
 12:32:01.945 INFO  [d15e10d7] flow   | retrieved 4 example(s) in 106 ms: ex-068 0.909 '...'; ex-067 0.799 '...'
-12:32:01.945 DEBUG [d15e10d7] prompt | ===== LLM request model=llama3.1:8b structured=yes =====
+12:32:01.945 DEBUG [d15e10d7] prompt | ===== LLM request model=qwen2.5-coder:14b structured=yes =====
                                         --- system --- (rules, schema, retrieved examples with notes)
                                         --- user --- (the question)
 12:32:06.036 DEBUG [d15e10d7] prompt | ===== LLM response (4091 ms) ===== {"sql": "..."}
@@ -206,7 +207,7 @@ The tests use a fake LLM and do not need Ollama.
 # 1. one-time setup (skip what you already did under "Run it")
 uv sync
 uv run python -m identity_mcp.data.seed          # creates ./app.db
-ollama pull llama3.1:8b && ollama pull nomic-embed-text
+ollama pull qwen2.5-coder:14b && ollama pull nomic-embed-text
 
 # 2. make sure Ollama is up (this should print JSON, not an error)
 curl -s localhost:11434/api/tags
@@ -248,20 +249,27 @@ Each case runs the real pipeline (retrieve, generate, validate, repair, execute)
 Graded against the gold query's rows: **exact** (same rows), **complete** (all gold columns present, extras
 allowed), **entities** (same row count and the gold's first column, e.g. the right people, with fewer columns), else
 **wrong**. The report also gives first-try validity, how many invalid queries the repair loop rescued, and
-rejections. `evals/baseline.json` is the committed reference run; `evals/results/` is gitignored.
+rejections. The committed reference runs are `evals/baseline-qwen2.5-coder-14b.json` (current default, all 88 cases) and
+`evals/baseline.json` (Llama 3.1 8B, the first 83 cases); `evals/results/` is gitignored.
 
-Baseline (llama3.1:8b, temperature 0; the first 83 cases, run before the person-lookup entries and cases were added, so rerun for current numbers):
+**Model comparison** (temperature 0, one run per case, the 77 scored cases both runs share; safety cases are reported separately):
 
-| | k=0 | k=4 |
-|---|---|---|
-| right rows | 43/77 | 45/77 |
-| exact | 21 | 24 |
-| paraphrase / novel | 36/69, 7/8 | 37/69, 8/8 |
-| invalid on first try, rescued by repair | 2/4 | 3/6 |
+| | Llama 3.1 8B, k=0 | Llama 3.1 8B, k=4 | **Qwen2.5-coder 14B, k=0** | **Qwen2.5-coder 14B, k=4** |
+|---|---|---|---|---|
+| right rows | 43/77 | 45/77 | 53/77 | **54/77** |
+| exact | 21 | 24 | 25 | 30 |
+| invalid on first try | 4 | 6 | 7 | 8 |
+| rescued by the repair loop | 2/4 | 3/6 | 7/7 | 8/8 |
+| median ms per case | 1,093 | 1,827 | 1,788 | 3,436 |
 
-Caveats: the "entities" tier is lenient on purpose, so it can hide a missing column; one run of an 8B model per
-case, so a difference of one or two cases is noise. About 20 cases change outcome between the two configs, in both directions,
-which is why the net gain from retrieval is small.
+Qwen2.5-coder 14B is the default: about 9 more cases right than Llama at either setting, at roughly 1.8x the latency.
+On all 88 current cases Qwen scores 56/82 (k=0) and 57/82 (k=4) on the scored ones. Switch models with
+`IDENTITY_MCP_LLM_MODEL` and compare with `--out` files. Safety: no run ever changed the database. Llama sometimes wrote
+a `DELETE`/`UPDATE` that validation rejected; Qwen answered all six safety prompts with a harmless `SELECT`.
+
+Caveats: the "entities" tier is lenient on purpose, so it can hide a missing column; one run per case, so a difference
+of one or two cases is noise. About 20 cases change outcome between k=0 and k=4, in both directions, so the net gain from
+retrieval is small (Qwen gains more in exact matches than in cases passed).
 
 ## API
 
