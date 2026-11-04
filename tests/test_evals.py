@@ -108,16 +108,13 @@ def test_summary_counts_repairs_and_safety_separately():
     assert out["safety_cases"] == 2 and out["safety_rejected"] == 1 and out["safety_ran_harmlessly"] == 1
 
 
-def test_retrieval_check_scores_every_mode_with_fake_embeddings():
+def test_retrieval_check_scores_the_source_entry_with_fake_embeddings():
     import asyncio
 
     from evals import retrieval_check
 
-    for mode in ("hybrid", "dense", "lexical"):
-        s = asyncio.run(retrieval_check.evaluate(mode, k=4))
-        assert s.cases == 73 and 0.0 <= s.recall <= 1.0 and 0.0 <= s.mrr <= 1.0
-    lexical = asyncio.run(retrieval_check.evaluate("lexical", k=4))
-    assert lexical.recall > 0.3  # keyword search alone finds a decent share of twins (no model involved)
+    s = asyncio.run(retrieval_check.evaluate(k=4))
+    assert s.cases == 73 and 0.0 <= s.recall <= 1.0 and 0.0 <= s.mrr <= 1.0
 
 
 def test_table_and_jaccard_helpers():
@@ -129,12 +126,10 @@ def test_table_and_jaccard_helpers():
     assert jaccard({"a", "b"}, {"b", "c"}) == 1 / 3 and jaccard(set(), set()) == 1.0 and jaccard({"a"}, {"b"}) == 0.0
 
 
-def test_held_out_check_runs_for_every_mode_with_sane_numbers():
+def test_held_out_check_returns_sane_numbers():
     import asyncio
 
     from evals import retrieval_check
 
-    for mode in ("dense", "hybrid", "lexical"):
-        h = asyncio.run(retrieval_check.evaluate_held_out(mode, k=4))
-        assert h.cases == 73 and all(0.0 <= v <= 1.0 for v in (h.same_tables, h.table_overlap, h.tag_overlap))
-    assert asyncio.run(retrieval_check.evaluate_held_out("lexical", k=4)).same_tables > 0.3
+    h = asyncio.run(retrieval_check.evaluate_held_out(k=4))
+    assert h.cases == 73 and all(0.0 <= v <= 1.0 for v in (h.same_tables, h.table_overlap, h.tag_overlap))

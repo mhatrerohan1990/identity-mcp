@@ -16,7 +16,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with one `ask` tool (question → SQL → rows → answer, local Qwen via Ollama) | done, basic flow |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
-| Retrieval (RAG) of similar bank examples into the SQL prompt: embeddings + BM25 keywords, fused | done; dense is the default, hybrid is opt-in and unproven |
+| Retrieval (RAG) of similar bank examples into the SQL prompt (embeddings) | done; hybrid with BM25 tried and dropped, no gain |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
@@ -62,8 +62,7 @@ Configuration (environment variables):
 | `IDENTITY_MCP_LLM_MODEL` | `qwen2.5-coder:14b` | Ollama model used for both SQL generation and answers (e.g. `llama3.1:8b`) |
 | `IDENTITY_MCP_EMBED_MODEL` | `nomic-embed-text` | Embedding model for example retrieval |
 | `IDENTITY_MCP_EXAMPLES_K` | `4` | Bank examples added to the SQL prompt; `0` turns retrieval off |
-| `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to enter the embedding ranking (the keyword ranking needs a shared word instead) |
-| `IDENTITY_MCP_RETRIEVAL` | `dense` | Retrieval strategy: `dense` (embeddings), `hybrid` (embeddings + BM25 keywords) or `lexical` (keywords only, no embedding model) |
+| `IDENTITY_MCP_EXAMPLES_MIN_SCORE` | `0.5` | Minimum cosine similarity for an example to be used |
 | `IDENTITY_MCP_BANK` | `examples/examples.md` | Question bank file |
 | `IDENTITY_MCP_MAX_REPAIRS` | `2` | Retries after a query fails validation; `0` disables the repair loop |
 | `IDENTITY_MCP_LOG_LEVEL` | `INFO` | Level for the flow log (`DEBUG`, `INFO`, `WARNING`, ...) |
@@ -211,24 +210,18 @@ The `prompt` lines are the exact messages sent to Ollama and its raw replies, an
 per question). Set `IDENTITY_MCP_LOG_PROMPTS=0` to keep only the one-line `flow` steps. Prompts and the
 answer-step prompt contain query results, so treat these logs as sensitive once the data is real.
 
-**How retrieval works.** Dense by default; an opt-in hybrid mode merges two rankings of the bank.
+**How retrieval works.** The bank's 104 questions are embedded once with `nomic-embed-text` (cached in `.cache/`). For each
+incoming question the closest `k` entries by cosine similarity are added to the SQL prompt as worked examples (question,
+SQL and notes), best match last. `ask` returns the entries it used in `examples` (id, question, score). If the embedding
+model is unavailable it answers without examples and sets `warning`.
 
-- *Dense* (`retrieval.py`): the bank's 104 questions are embedded once (cached in `.cache/`) and ranked by cosine
-  similarity to the question. Good at paraphrase, but `nomic-embed-text` scores cluster between 0.5 and 0.8, so it is
-  weak at telling similar entries apart.
-- *Keyword* (`lexical.py`): BM25 over each entry's question and tags, after lower-casing, dropping filler words,
-  stripping plurals and mapping synonyms (`left`/`departed` -> `terminated`, `2FA`/`two-factor` -> `mfa`,
-  `apps` -> `application`). Blind to paraphrase but precise about the words that matter.
-- *Fusion*: reciprocal rank fusion, `1 / (60 + rank)` summed over the rankings, so the two score scales never need
-  reconciling. The best `k` become worked examples in the SQL prompt (question, SQL and notes), best match last.
+To check retrieval alone, without the chat model, run `uv run python -m evals.retrieval_check`. It reports (1) recall@k and
+MRR of each paraphrase's source entry (0.99 and 0.95 today), and (2) with that entry hidden, how closely the remaining
+examples match its tables and tags.
 
-`IDENTITY_MCP_RETRIEVAL=dense|hybrid|lexical` switches strategy. The default is `dense`: on the source-entry check it found the
-right entry as often as hybrid (recall@4 0.99 both) and ranked it slightly higher (MRR 0.95 vs 0.92), so hybrid stays
-opt-in until it wins on the held-out check. `ask` returns the entries it used in
-`examples` (id, question, score). If the embedding model is unavailable it answers without examples and sets
-`warning`. To check retrieval alone, without the chat model: `uv run python -m evals.retrieval_check`. It reports (1) recall@k and MRR of
-each paraphrase's source entry, and (2) with that entry hidden, how closely the remaining examples match its tables and tags.
-The result for `dense` is 0.99 / 0.95 on (1); hybrid and lexical are opt-in until they win on (2).
+*Tried and dropped: hybrid retrieval.* Merging the embedding ranking with BM25 keyword search (plural stripping, synonym
+map, reciprocal rank fusion) looked slightly better on (2) but scored the same on the full SQL eval (60/87 right rows for both,
+k=4, Qwen2.5-coder 14B), so the extra code was removed. It is in git history (commit `c2b487c`) if embeddings ever stop being enough.
 
 **How much it helps (measured, small sample).** 16 reworded questions, each with its own bank entry
 hidden, scored by whether the result contains the right entities: 8/16 without examples, 9 to 11/16 with
@@ -364,7 +357,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG: fuses embeddings and `lexical.py` BM25), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG over the bank, embeddings), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
 tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests
