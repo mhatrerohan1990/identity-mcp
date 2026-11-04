@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .. import pipeline
+from ..conversation import Turn
 from ..logs import configure
 from ..mcp_server import mcp
 from .routes import ALL
@@ -44,14 +45,21 @@ def health():
 
 
 class AskRequest(BaseModel):
-    """Body of ``POST /api/ask``: one non-empty question of at most 1000 characters."""
+    """Body of ``POST /api/ask``.
+
+    Attributes:
+        question: One non-empty question of at most 1000 characters.
+        history: The earlier turns of this conversation, oldest first (at most 6 accepted; the last 3 are used).
+            Empty for a first question.
+    """
     question: str = Field(min_length=1, max_length=1000)
+    history: list[Turn] = Field(default_factory=list, max_length=6)
 
 
 @app.post("/api/ask", tags=["chat"])
 async def ask(body: AskRequest):
     """Same pipeline as the MCP `ask` tool; used by the chat page."""
-    return await pipeline.ask(body.question.strip())
+    return await pipeline.ask(body.question.strip(), history=body.history)
 
 
 @app.get("/", include_in_schema=False)

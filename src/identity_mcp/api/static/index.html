@@ -38,6 +38,8 @@
   th { position: sticky; top: 0; background: var(--code); }
   .meta { margin-top: 6px; font-size: 12px; color: var(--muted); }
   .typing { color: var(--muted); font-style: italic; }
+  #newchat { margin-left: auto; font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+  #newchat:hover { color: var(--text); border-color: var(--accent); }
   .hints { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
   .hints button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--text); cursor: pointer; }
   .hints button:hover { border-color: var(--accent); }
@@ -51,7 +53,7 @@
 </style>
 </head>
 <body>
-<header><h1>identity-mcp</h1><span>Ask questions about users, groups, apps, access and activity</span></header>
+<header><h1>identity-mcp</h1><span>Ask questions about users, groups, apps, access and activity</span><button type="button" id="newchat" title="Forget the conversation so far">New chat</button></header>
 <div id="log"><div class="wrap" id="chat">
   <div class="msg bot" id="welcome"><div class="bubble welcome">Ask a question in plain English. Try one of these:
     <div class="hints" id="hints"></div></div></div>
@@ -63,6 +65,8 @@
 <script>
 const chat = document.getElementById("chat"), log = document.getElementById("log"), form = document.getElementById("form");
 const q = document.getElementById("q"), send = document.getElementById("send");
+const history = [];  // earlier turns of this chat; sent with each question so follow-ups can be resolved (lost on refresh)
+const HISTORY_SENT = 3, ROWS_KEPT = 20;
 const SAMPLES = [
   "How many users are terminated?",
   "Which terminated users still have access to anything?",
@@ -95,6 +99,7 @@ function resultTable(columns, rows) {
 function addBot(data) {
   const m = el("div", "msg bot"), failed = !!data.error;
   m.append(el("div", failed ? "bubble error" : "bubble", data.answer || data.error));
+  if (data.standalone_question) m.append(el("div", "meta", `Interpreted as: ${data.standalone_question}`));
   if (data.sql) {
     const fixed = data.repairs > 0 && !failed;
     const d = el("details"); d.append(el("summary", null, fixed ? `SQL (fixed after ${data.repairs} retry)` : "SQL"));
@@ -124,15 +129,22 @@ async function ask(question) {
   const wait = el("div", "msg bot"); wait.append(el("div", "bubble typing", "Thinking…")); chat.append(wait); scroll();
   send.disabled = true;
   try {
-    const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) });
+    const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, history: history.slice(-HISTORY_SENT) }) });
     if (!r.ok) throw new Error(`Server returned ${r.status}`);
-    wait.remove(); addBot(await r.json());
+    const data = await r.json();
+    wait.remove(); addBot(data);
+    if (!data.error) history.push({ question, answer: data.answer || null, columns: data.columns || [], rows: (data.rows || []).slice(0, ROWS_KEPT) });
   } catch (e) {
     wait.remove(); addBot({ error: `Request failed: ${e.message}` });
   } finally {
     send.disabled = false; q.focus();
   }
 }
+
+document.getElementById("newchat").addEventListener("click", () => {
+  history.length = 0;  // start over: the next question is answered without earlier context
+  while (chat.children.length > 1) chat.children[1].remove();
+});
 
 form.addEventListener("submit", e => {
   e.preventDefault();

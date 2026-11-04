@@ -21,6 +21,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Repair loop: a rejected query goes back to the model with the reasons (max 2 retries) | done |
 | Value grounding: filters on values that do not exist in the data are caught and corrected (`grounding.py`) | done |
 | Eval suite (`evals/`): 93 cases, k=0 vs k=4, repair/rejection stats | done, first baseline |
+| Multi-turn: follow-ups ("the newer one", "what can he access?") rewritten into standalone questions (`conversation.py`) | done, stateless |
 | Chat UI (static page + `POST /api/ask`) | done, basic |
 | Feedback loop, per-table tools | planned |
 
@@ -162,6 +163,35 @@ reworded questions, 1 query was invalid on the first try and the loop repaired i
 right answers did not change (11/16), because the repaired query was valid but still not the expected one.
 The loop turns recoverable mistakes into answers rather than refusals; it does not make the model more
 correct.
+
+## Multi-turn conversations
+
+`src/identity_mcp/conversation.py`. A follow-up like "the newer one" cannot be answered alone. Before the pipeline starts, an
+extra model call rewrites it into a standalone question using the earlier turns:
+
+```
+You:  Show me more info on Arjun Cohen        (two people share this name, ids 405 and 436)
+You:  the newer one
+      interpreted as: Show me more info on the user with id 436 (Arjun Cohen, arjun.cohen36@acme.example)
+You:  which applications can he access?
+      interpreted as: Which applications can the user with id 436 (Arjun Cohen, ...) access?
+```
+
+Everything after the rewrite (retrieval, SQL generation, validation, grounding, repair, answer) runs on the rewritten question
+and is unchanged.
+
+- **Stateless server.** The client sends the earlier turns with each question; nothing is stored. The chat page keeps them in the
+  browser tab (a **New chat** button clears them; a refresh does too). MCP clients pass `history` to the `ask` tool.
+- **What the rewriter sees.** The last 3 turns, each as the question, the answer (cut to 300 characters) and the first 5 result
+  rows (cells cut to 60 characters). The rows carry ids and emails, which is how a reference resolves to one person when names repeat.
+  The SQL and older turns are not sent, and nothing is summarized by a model.
+- **First question costs nothing extra.** With no history there is no rewrite call.
+- **Fails soft.** If the rewrite call fails or returns something unusable, the question runs as typed and `warning` says so.
+- **Untrusted input.** History comes from the client: it is size-limited on input (6 turns, 20 rows each) and shrunk again before use.
+  The rewriter only produces a question; any SQL still goes through validation and the read-only sandbox.
+- **Response.** `ask` returns `standalone_question` when the question was rewritten; `question` is always what was typed.
+
+Limits: three turns of memory, so an entity from long ago is forgotten; and saved chat history (a conversation id, stored turns) is not built.
 
 ## Value grounding
 
@@ -364,7 +394,7 @@ in 90+ days (dormant), 20 active members of privileged groups without MFA. "Toda
 ```
 src/identity_mcp/data/   schema.sql, seed.py
 src/identity_mcp/api/    app.py (chat page, /api/ask, mounts MCP), routes.py, db.py, static/index.html
-src/identity_mcp/        pipeline.py (ask; wires the layers together), retrieval.py (RAG over the bank, embeddings), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
+src/identity_mcp/        pipeline.py (ask; wires the layers together), conversation.py (follow-up rewriting), retrieval.py (RAG over the bank, embeddings), validation.py (safe + well-formed), grounding.py (values exist), bank.py, llm.py (Ollama client), logs.py, mcp_server.py, db.py
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baseline.json
 tests/                seed, API, MCP, question-bank, validation, repair and eval-plumbing tests

@@ -11,6 +11,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import pipeline
+from .conversation import Turn
 from .logs import configure
 
 mcp = MCPServer(
@@ -23,14 +24,18 @@ mcp = MCPServer(
 
 
 @mcp.tool()
-async def ask(question: str) -> dict[str, Any]:
+async def ask(question: str, history: list[Turn] | None = None) -> dict[str, Any]:
     """Answer a plain-English question about users, groups, applications, entitlements, access grants
     and activity events (e.g. "Which terminated users still have access?").
+
+    For a follow-up such as "tell me more about him" or "the second one", pass `history`: the earlier turns, oldest
+    first, each with its `question`, `answer`, and result `columns`/`rows` as returned by this tool. The question is
+    then rewritten to stand on its own (returned as `standalone_question`) before being answered.
 
     Returns `answer` (natural language), plus the `sql` that was run and the result `columns`/`rows`.
     If something failed, `error` explains why.
     """
-    return await pipeline.ask(question)
+    return await pipeline.ask(question, history=history)
 
 
 if __name__ == "__main__":

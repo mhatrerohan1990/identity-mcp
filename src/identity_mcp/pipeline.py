@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import grounding, llm, retrieval
+from . import conversation, grounding, llm, retrieval
 from .db import SCHEMA_SQL
 from .logs import configure, flow, new_request_id, one_line
 from .validation import MAX_VALUE_BYTES, Validation, ValidationError, connect_query, normalize, validate, validate_static
@@ -265,8 +265,19 @@ async def produce_sql(question: str, hits: list[retrieval.Hit]) -> Draft:
     return Draft(sql, check, attempts, repairs, generate_ms, validate_ms, repair_ms)
 
 
-async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = frozenset()) -> dict[str, Any]:
+async def ask(
+    question: str,
+    *,
+    history: list[conversation.Turn] | None = None,
+    k: int | None = None,
+    exclude: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """Answer `question` from the database. Never raises for expected failures; see the `error` key.
+
+    `history` holds the earlier turns of the conversation, oldest first. When present, a follow-up such as "tell me
+    more about him" is first rewritten into a standalone question (see ``conversation.py``); that rewritten text,
+    returned as `standalone_question`, is what the rest of the pipeline runs on. `question` in the result is always
+    what the user typed.
 
     `k` overrides how many bank examples are retrieved (0 disables retrieval); `exclude` hides bank ids
     (used by evals to hold questions out).
@@ -278,12 +289,22 @@ async def ask(question: str, *, k: int | None = None, exclude: frozenset[str] = 
     timings: dict[str, int] = {}
     out["timings_ms"] = timings
     try:
+        if history:  # a follow-up is made standalone first; everything below runs on the rewritten question
+            t = time.monotonic()
+            rewrite = await conversation.standalone_question(question, history)
+            timings["rewrite"] = round((time.monotonic() - t) * 1000)
+            if rewrite.warning:
+                out["warning"] = rewrite.warning
+            if rewrite.changed:
+                out["standalone_question"] = rewrite.question
+            question = rewrite.question
+
         t = time.monotonic()
         hits: list[retrieval.Hit] = []
         try:
             hits = await retrieval.retrieve(question, k=k, exclude=exclude)
         except (llm.LLMError, FileNotFoundError) as e:  # degrade to no examples, but say so
-            out["warning"] = f"Answered without example retrieval: {e}"
+            out["warning"] = (out["warning"] + " " if "warning" in out else "") + f"Answered without example retrieval: {e}"
             flow.warning("retrieval failed, continuing without examples: %s", e)
         out["examples"] = [{"id": h.example.id, "question": h.example.question, "score": round(h.score, 3)} for h in hits]
         timings["retrieve"] = round((time.monotonic() - t) * 1000)
