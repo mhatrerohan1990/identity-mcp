@@ -84,14 +84,14 @@ _RETURNS = (
 )
 
 IDENTITY_TOOL = (
-    f"Ask about people, groups and access. {IDENTITY.description}\n\n"
+    f"{IDENTITY.description}\n\n"
     'Examples: "Which active users have admin access?", "Who is in the Cloud Admins group?", "Which terminated users '
     'still have access to Snowflake?". Cannot answer anything about activity (logins, last seen); use query_activity.\n\n'
     + _RETURNS
 )
 
 ACTIVITY_TOOL = (
-    f"Ask about what users did. {ACTIVITY.description}\n\n"
+    f"{ACTIVITY.description}\n\n"
     'Examples: "How many failed logins were there in the last 30 days?", "When was each of these users last active?", '
     '"Which of these users had no activity in the last 90 days?" (with `filter_from`). Cannot answer anything about '
     "groups, entitlements or who has access; use query_identity.\n\n"

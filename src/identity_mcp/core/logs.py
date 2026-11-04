@@ -59,8 +59,15 @@ def block(title: str, body: str) -> str:
 
 
 def configure() -> None:
-    """Install the stderr handler and levels from the environment. Safe to call more than once."""
+    """Install the stderr handler and levels from the environment. Safe to call more than once.
+
+    Our lines are not passed on to the root logger (a host such as the MCP SDK may have installed a handler there, which
+    printed every line twice), and the HTTP client's per-request INFO lines are silenced: the flow log already says what
+    each model call was for.
+    """
     root = logging.getLogger("identity_mcp")
+    root.propagate = False
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     if not any(getattr(h, "_identity_mcp", False) for h in root.handlers):
         handler = logging.StreamHandler()  # stderr
         handler._identity_mcp = True  # type: ignore[attr-defined]

@@ -16,6 +16,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the design.
 | Simple read-only REST API per entity | done |
 | MCP server with two scoped tools, `query_identity` and `query_activity` (question → SQL → rows, local Qwen via Ollama) | done |
 | Hand-off between tools: a result id one tool returns, the next filters on (`handoff.py`) | done |
+| Agent: a LangGraph loop, our own MCP client, that chains the two tools (`agent/`) | done, command line; chat page not wired yet |
 | Question bank: 104 English questions with expected SQL (`examples/examples.md`) | done |
 | Retrieval (RAG) of similar bank examples into the SQL prompt (embeddings) | done; hybrid with BM25 tried and dropped, no gain |
 | Validation before execution: static checks, `EXPLAIN` dry run, sandboxed connection | done, hardened |
@@ -132,6 +133,50 @@ Connect Claude Desktop (stdio): add this to `claude_desktop_config.json`, with y
 
 Inspect it interactively: `npx @modelcontextprotocol/inspector`, then connect to `http://localhost:8000/mcp`
 (Streamable HTTP).
+
+## Agent (LangGraph)
+
+A question that needs both tools ("show me dormant admin accounts") is answered by a reason-and-act loop that lives in the
+*client*, as it does with any MCP server. Ours is built with LangGraph and talks to the server over MCP only.
+
+```sh
+uv sync --extra agent                                         # LangGraph + the Ollama chat model (optional dependencies)
+uv run python -m identity_mcp.agent "Show me dormant admin accounts"
+uv run python -m identity_mcp.agent --model llama3.1:8b --max-steps 8 "Who is in Cloud Admins and when were they last active?"
+```
+
+Each step prints to stderr as it happens, and the answer goes to stdout:
+
+```
+[ 0.0s] model qwen2.5-coder:14b; tools: query_identity, query_activity
+[10.9s] -> query_identity('Which active users have admin access?')
+[19.8s] <- identity: 72 row(s), columns ['id', 'name', 'email'], result_id=r_046589
+[25.1s] -> query_activity('Which of these users had no activity in the last 90 days?', filter_from=r_046589.id)
+[36.1s] <- activity: 15 row(s), columns ['id', 'name', 'email'], result_id=r_f9876c
+[43.3s] -> final_answer(answer='The following dormant admin accounts ...')
+```
+
+The graph (`agent/graph.py`): `agent` (the model, with the two MCP tools and `final_answer` bound) -> `tools` -> `agent` ... until the
+model calls `final_answer`. By default the server is launched as a stdio subprocess; set `IDENTITY_MCP_AGENT_SERVER=http://localhost:8000/mcp`
+to use a running one, and `IDENTITY_MCP_AGENT_MODEL` to pick the agent's model (default: the SQL model).
+
+Rules the loop adds, each from something a local model really did:
+
+- **Finishing is explicit.** The model ends the run by calling `final_answer`. A model that writes "Now let's check their activity" in
+  plain text has not finished, so plain text is answered with a nudge (at most twice, then the text is accepted). A `final_answer` before
+  any data was fetched is sent back as well.
+- **Tool calls written as text are recovered.** `qwen2.5-coder` often emits `{"name": "query_identity", "arguments": {...}}` as message
+  text; `agent/recovery.py` turns it into a real call, but only for tool names we offered.
+- **Step budget.** At most 6 model calls per question (`--max-steps`); after that the run ends with an honest "ran out of steps" message.
+- **Errors are data.** A failed tool call comes back as a message the model can read and react to.
+- **Schema and arguments are cleaned.** The server's JSON schema is flattened (no `$ref` or `anyOf`), and `null` placeholders such as
+  `filter_from: {result_id: null, column: null}` are dropped before the call.
+- **Own MCP bridge.** `agent/tools.py` wraps the server's tools as LangChain tools; `langchain-mcp-adapters` 0.3.1 cannot be used because
+  it imports a class the MCP SDK 2.x no longer has.
+
+Measured so far (one question, not an eval): dormant admins gives the same 15 people as a direct SQL join with both
+`qwen2.5-coder:14b` (43 s) and `llama3.1:8b` (49 s). Each model call is 3 to 15 s, so a two-tool question takes 40 to 60 s.
+Not done: the chat page still uses the single-shot pipeline, no chat memory across turns, and no agent eval cases.
 
 ## Validation
 
@@ -420,7 +465,8 @@ src/identity_mcp/
 │                  executor.py (run safely), answer.py (summary)
 ├── mcp_server.py  the two MCP tools                                                interface
 ├── api/           app.py (chat page, /api/ask, mounts MCP), routes.py, static/     interface
-└── agent/         (next) our LangGraph client of the MCP server                    interface, talks to the server over MCP only
+└── agent/         tools.py (MCP bridge), graph.py (LangGraph loop), prompts.py,     interface, talks to the server over MCP only
+                   recovery.py, __main__.py (command line)
 examples/examples.md  104 question -> expected SQL pairs (verified by tests/rag/test_examples.py)
 evals/                eval suite: cases.json, runner (python -m evals.run), grading, baselines
 tests/                mirrors the package: core is covered through the others, then rag/, guardrails/, context/, pipeline/,
